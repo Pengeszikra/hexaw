@@ -1,0 +1,11 @@
+EXP "add" 00
+
+FN 00
+  PAR 00
+  PAR 01
+  RES
+  GET 00
+  GET 01
+  ADD
+  RET
+END

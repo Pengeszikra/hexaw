@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#111612">
+  <meta name="description" content="Close to the bytes. Write HEXAW assembly, inspect real WebAssembly, and step through every instruction.">
+  <title>HEXAW · The byte workshop</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%23111612'/%3E%3Cpath d='M11 20l7 26 14-19 14 19 7-26' fill='none' stroke='%23b8dc91' stroke-width='5'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="./style.css">
+  <script type="module" src="./app.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="HEXAW home"><span class="brand-mark">HE<span>X</span>AW<span class="brand-dot">.</span></span><span class="brand-label">THE BYTE WORKSHOP<span>WebAssembly, within reach.</span></span></a>
+    <nav class="top-actions" aria-label="Project actions">
+      <span class="version">ASSEMBLY / v0.1</span>
+      <button id="open-btn" class="quiet" title="Open a .hexaw or supported .wasm file"><span data-icon="folder"></span><span>Open file</span></button>
+      <div class="dropdown"><button id="save-btn" class="quiet" aria-expanded="false"><span data-icon="download"></span><span>Export</span><span data-icon="chevron"></span></button><div id="save-menu" class="menu" hidden><button id="save-hexaw">HEXAW source <small>.hexaw</small></button><button id="save-wasm">WebAssembly binary <small>.wasm</small></button><button id="save-dump">Annotated hexdump <small>.txt</small></button><button id="save-trace">Execution trace <small>.json</small></button><a class="source-download" href="https://github.com/Pengeszikra/hexaw/archive/refs/heads/main.zip">Complete project source <small>.zip</small></a></div></div>
+      <button id="help-btn" class="quiet help-button"><span data-icon="book"></span><span>Field guide</span></button>
+    </nav>
+  </header>
+
+  <main>
+    <section class="intro" aria-label="Workshop introduction">
+      <div><p class="eyebrow"><span class="signal-dot"></span> A SMALL TIME MACHINE FOR THE WEB</p><h1>Close to the <em>bytes.</em></h1><p class="intro-copy">A few mnemonics. Real WebAssembly. Every byte accounted for.</p></div>
+      <div class="intro-meta"><span class="meta-glyph">20 00<br>20 01<br><b>6A</b></span><div>WRITE IT.<br>SEE IT.<br><span>STEP THROUGH IT.</span></div></div>
+    </section>
+
+    <section class="workbench" aria-label="HEXAW debugger">
+      <div class="project-strip">
+        <div class="example-wrap"><span data-icon="chip"></span><select id="example" aria-label="Example program"></select><span class="project-separator">/</span><span id="example-label">Two numbers. One instruction.</span></div>
+        <span id="module-badge" class="badge">NO MODULE</span>
+      </div>
+
+      <div class="controls">
+        <button id="assemble" class="primary"><span data-icon="hammer"></span>Assemble <kbd>⌘ ↵</kbd></button>
+        <div class="control-divider"></div>
+        <button id="run" class="run-button" title="Continue (F8)"><span data-icon="play"></span><span>Run</span></button>
+        <button id="pause" class="icon-button" title="Pause" aria-label="Pause" hidden><span data-icon="pause"></span></button>
+        <button id="back" class="icon-button" title="Step back (Shift+F10)" aria-label="Step back"><span data-icon="back"></span></button>
+        <button id="step" class="step-button" title="Step into (F10)"><span data-icon="step"></span><span>Step</span><kbd>F10</kbd></button>
+        <button id="over" class="icon-button" title="Step over (F11)" aria-label="Step over"><span data-icon="over"></span></button>
+        <button id="reset" class="icon-button" title="Reset execution" aria-label="Reset execution"><span data-icon="reset"></span></button>
+        <div class="control-divider"></div>
+        <div class="entry-control"><label for="entry">ENTRY</label><select id="entry" aria-label="Entry function"></select></div>
+        <div id="args" class="args" aria-label="Function arguments"></div>
+        <button id="native" class="native-button" title="Run the same binary in the browser's native WASM engine"><span data-icon="bolt"></span>Native run</button>
+      </div>
+
+      <div class="workspace">
+        <section class="source-panel panel" aria-label="HEXAW source editor">
+          <header class="panel-header"><div class="panel-title"><span class="panel-number">01</span> SOURCE <span class="file-extension">main.hexaw</span></div><span id="source-state" class="tiny-status">SAVED LOCALLY</span></header>
+          <div class="editor-wrap"><div id="gutter" class="gutter" aria-label="Source line breakpoints"></div><div class="editor-area"><pre id="highlight" class="code-layer" aria-hidden="true"></pre><textarea id="editor" aria-label="HEXAW assembly source" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" wrap="off"></textarea></div></div>
+          <footer class="panel-footer"><span id="cursor-position">Ln 1, Col 1</span><span>HEXAW <span class="muted">/</span> UTF-8</span><button id="clear-breakpoints" title="Clear all breakpoints"><span class="breakpoint-key"></span><span id="breakpoint-count">0 breakpoints</span></button></footer>
+        </section>
+
+        <section class="assembly-panel panel" aria-label="Decoded WebAssembly instructions">
+          <header class="panel-header"><div class="panel-title"><span class="panel-number">02</span> ASSEMBLY</div><span id="instruction-count" class="tiny-status">0 INSTRUCTIONS</span></header>
+          <div class="listing-heading"><span></span><span>OFFSET</span><span>BYTES</span><span>INSTRUCTION</span></div>
+          <div id="listing" class="listing"></div>
+          <footer class="panel-footer"><span><i class="pc-key"></i> next instruction</span><span id="pc-label">PC —</span></footer>
+        </section>
+
+        <section class="inspector-panel panel" aria-label="Runtime inspector">
+          <header class="panel-header"><div class="panel-title"><span class="panel-number">03</span> MACHINE STATE</div><span id="runtime-state" class="runtime-state">READY</span></header>
+          <div id="result" class="result-box"><span>RETURN VALUE</span><strong>—</strong><small>Waiting for the first instruction.</small></div>
+          <div class="inspector-tabs" role="tablist" aria-label="Inspector views"><button data-inspector="stack" class="active" role="tab" aria-selected="true">Stack <span id="stack-count">0</span></button><button data-inspector="locals" role="tab" aria-selected="false">Locals</button><button data-inspector="calls" role="tab" aria-selected="false">Calls</button></div>
+          <div id="inspector" class="inspector-content"></div>
+          <div id="native-result" class="native-result" hidden></div>
+          <div class="machine-summary"><div><span>EXECUTED</span><strong id="step-count">0000</strong></div><div><span>MEMORY</span><strong id="memory-size">0 B</strong></div><div><span>CALL DEPTH</span><strong id="call-depth">01</strong></div></div>
+        </section>
+      </div>
+
+      <section class="binary-panel" aria-label="Binary and execution detail">
+        <div class="binary-toolbar"><div class="binary-tabs" role="tablist" aria-label="Binary views"><button data-bottom="binary" class="active" role="tab" aria-selected="true"><span data-icon="grid"></span>Module bytes <span id="byte-count">0</span></button><button data-bottom="memory" role="tab" aria-selected="false"><span data-icon="memory"></span>Linear memory</button><button data-bottom="trace" role="tab" aria-selected="false"><span data-icon="trace"></span>Trace <span id="trace-count">0</span></button></div><div class="binary-options"><label id="memory-address-wrap" hidden>ADDRESS <input id="memory-address" value="0" aria-label="Memory view starting address" size="7"></label><span id="binary-note">CLICK A BYTE TO INSPECT IT</span></div></div>
+        <div class="binary-content"><div id="hex-view" class="hex-view"></div><aside id="byte-detail" class="byte-detail"></aside></div>
+      </section>
+
+      <div id="status" class="status-bar" role="status" aria-live="polite"><span class="status-led"></span><span id="status-message">Ready to assemble.</span><span id="status-meta">HEXAW → WASM</span></div>
+    </section>
+    <footer class="page-footer"><span>BUILT FOR THE JOY OF KNOWING WHAT HAPPENS UNDERNEATH.</span><button id="about-btn">HEXAW 0.1 <span>↗</span></button></footer>
+  </main>
+
+  <input type="file" id="file-input" accept=".hexaw,.txt,.wasm" hidden>
+  <dialog id="guide"><div class="guide-top"><div><p class="eyebrow">KEEP THIS NEAR THE KEYBOARD</p><h2>The HEXAW field guide<span>.</span></h2></div><button id="close-guide" class="icon-button" aria-label="Close field guide"><span data-icon="close"></span></button></div><div class="guide-body">
+    <p>Write assembly on the left. Assemble it into a real <code>.wasm</code> module. Click any instruction or byte to follow the connection, then step through the binary.</p>
+    <div class="guide-grid"><section><h3>A small vocabulary</h3><dl><dt>FN 00 … END</dt><dd>Define function 0. Functions use consecutive indices.</dd><dt>PAR 00 · LOC 01 · RES</dt><dd>Declare a parameter, local or result. All default to i32.</dd><dt>GET 00 · SET 00 · TEE 00</dt><dd>Read, write, or write and keep a local value.</dd><dt>CONST 42 · ADD · RET</dt><dd>Push a value, add two stack values, return.</dd><dt>LPAR · LRES · LCONST · LADD</dt><dd>Prefix L for i64, F for f32, D for f64. GET/SET use the declared local type.</dd><dt>BLOCK · LOOP · IF · ELSE · END</dt><dd>Structured control flow. Add I32, I64, F32 or F64 for a block result.</dd><dt>BR 0 · BRIF 1 · CALL 00</dt><dd>Branch by relative block depth, or call a function. Depth 0 is the innermost label.</dd><dt>MEM 1 4 · LOAD · STORE</dt><dd>Declare initial / maximum pages. Optional memory arguments: offset, alignment exponent.</dd><dt>GLB 00 7 · GGET 00 · GSET 00</dt><dd>Declare, read and write a mutable global. Type prefixes also apply to GLB.</dd><dt>EXP "add" 00</dt><dd>Export a function by name. Unnamed functions get an automatic fn00-style export.</dd></dl></section><section><h3>The workshop controls</h3><ul class="guide-list"><li><kbd>Ctrl / ⌘ ↵</kbd><span>Assemble and reset execution</span></li><li><kbd>F10</kbd><span>Execute one instruction, entering calls</span></li><li><kbd>Shift F10</kbd><span>Undo one instruction</span></li><li><kbd>F11</kbd><span>Step over the current call</span></li><li><kbd>F8</kbd><span>Run / pause</span></li><li><kbd>F9</kbd><span>Toggle the current source line breakpoint</span></li><li><span class="breakpoint-key"></span><span>Click a source gutter or listing dot for a breakpoint</span></li></ul><h3>Numbers & bytes</h3><p>Numbers are decimal, including <code>00</code>. Use <code>0x2A</code> for hexadecimal. Offsets and byte values in the viewer are hexadecimal. Integers use signed LEB128 for constants, unsigned LEB128 for indices and lengths.</p><h3>What this version covers</h3><p>Four numeric types; scalar arithmetic, comparisons and conversions; locals, globals, calls, blocks, loops, branches and a single memory. The instruction catalog below is generated from the assembler rule table.</p><p>Stepping executes decoded WASM in a reversible interpreter. <b>Native run</b> runs a fresh instance of the same binary in the browser engine, with a two-second timeout. It does not change the debugger state.</p><p>WASM import retains the exact uploaded bytes for supported modules. Imports, tables, start functions, SIMD, references, GC and multi-value signatures are outside this version. Memory requires an explicit maximum of at most 256 pages; the debugger keeps the last 2,000 reversible steps. NaN payload bits are not preserved by the interpreter.</p></section></div>
+    <section class="catalog"><h3>Instruction catalog <span id="catalog-count"></span></h3><input id="catalog-search" type="search" placeholder="Find an instruction: LADD, memory, i32…" aria-label="Search instruction catalog"><div id="catalog"></div></section>
+    <p class="guide-foot">HEXAW source and argument values are saved in this browser. No source code is sent to a server. <a href="https://webassembly.github.io/spec/core/" target="_blank" rel="noreferrer">WebAssembly specification ↗</a></p>
+  </div></dialog>
+</body>
+</html>

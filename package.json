@@ -1,0 +1,23 @@
+{
+  "name": "hexaw-repository",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "HEXAW CLI and browser Workshop",
+  "workspaces": ["packages/cli"],
+  "engines": { "node": ">=22.18" },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:package": "node scripts/test-package.mjs",
+    "check": "npm run build && npm test && npm run test:package",
+    "dev:workshop": "node scripts/serve-workshop.mjs",
+    "pack:cli": "npm pack --workspace packages/cli --pack-destination artifacts",
+    "publish:cli": "npm publish --workspace packages/cli --access public"
+  },
+  "devDependencies": {
+    "@pengeszikra/typescript": "7.1.0-pipeline.1",
+    "@types/node": "22.18.0"
+  },
+  "license": "MIT"
+}
