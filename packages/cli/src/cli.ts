@@ -5,15 +5,17 @@ import {randomUUID} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import {dumpWasm} from './dump.js';
 import type {DumpFormat} from './dump.js';
-import {compileHEXAW} from './core/hexaw-core.js';
+import {assembleWasm} from './assemble.js';
 
 const HELP=`HEXAW — WebAssembly, close to the bytes.
 
 Usage:
   hexaw [dump] <file.wasm|-> [options]
+  hexaw -b <file.hexaw|-> [-o <file.wasm|->]
   hexaw assemble <file.hexaw|-> -o <file.wasm|->
 
 Dump options:
+  -b, --bin                Assemble HEXAW to a WASM binary (default: stdout)
   -o, --output <file>       Write a file instead of stdout
   -f, --format <format>    dump (default), source, json, hex
       --source             Emit editable HEXAW, without byte columns
@@ -29,22 +31,26 @@ Examples:
   hexaw dump add.wasm --source > add.hexaw
   cat add.wasm | hexaw dump - --json
   hexaw assemble add.hexaw -o add.wasm
+  hexaw -b add.hexaw -o add.wasm
+  hexaw --bin add.hexaw > add.wasm
 
-The decoder covers 175 scalar instructions. Valid modules outside that subset
-are preserved as explicitly marked RAW bytes. --source requires a supported
-module. Validation never instantiates or executes the input program.
+The opcode table covers Core Wasm 3.0, threads/atomics and legacy exceptions.
+Both compact FN source and WASM 1 binary-layout source can be assembled.
+Native validation requires this Node.js engine to support the module's features.
+Validation never instantiates or executes the input program.
 `;
 class UsageError extends Error {}
 interface Options {command:'dump'|'assemble';input:string;output:string|null;format:DumpFormat;codeOnly:boolean;strict:boolean}
 function parseArgs(args:string[]):Options|'help'|'version' {
   if(args.length===0) return 'help';
   const opts:Options={command:'dump',input:'',output:null,format:'dump',codeOnly:false,strict:false};
-  let explicitCommand=false,endOptions=false;
+  let explicitCommand=false,endOptions=false,binary=false;
   for(let i=0;i<args.length;i++){
     const arg=args[i];
     if(!endOptions&&arg==='--'){endOptions=true;continue;}
     if(!endOptions&&(arg==='-h'||arg==='--help')) return 'help';
     if(!endOptions&&(arg==='-V'||arg==='--version')) return 'version';
+    if(!endOptions&&(arg==='-b'||arg==='--bin')){binary=true;continue;}
     if(!endOptions&&(arg==='-o'||arg==='--output'||arg==='-f'||arg==='--format')){
       const value=args[++i];if(!value)throw new UsageError(`${arg} needs a value`);
       if(arg==='-o'||arg==='--output')opts.output=value;
@@ -62,7 +68,8 @@ function parseArgs(args:string[]):Options|'help'|'version' {
     opts.input=arg;
   }
   if(!opts.input)throw new UsageError('Provide an input filename, or - for stdin');
-  if(opts.command==='assemble'&&!opts.output)throw new UsageError('assemble requires -o <file.wasm|->');
+  if(binary){if(explicitCommand&&opts.command==='dump')throw new UsageError('--bin cannot be combined with the dump command');opts.command='assemble';}
+  if(opts.command==='assemble'&&!opts.output&&!binary)throw new UsageError('assemble requires -o <file.wasm|->');
   if(opts.command==='assemble'&&(opts.format!=='dump'||opts.codeOnly||opts.strict))throw new UsageError('Dump formatting options do not apply to assemble');
   if(opts.command==='dump'&&opts.codeOnly&&opts.format!=='dump'&&opts.format!=='json')throw new UsageError('--code-only applies to dump or json output');
   if(opts.input!=='-'&&opts.output&&opts.output!=='-'&&resolve(opts.input)===resolve(opts.output))throw new UsageError('Input and output must be different files');
@@ -90,7 +97,7 @@ async function main():Promise<void>{
   const bytes=await readInput(options.input);
   if(options.command==='assemble'){
     let source:string;try{source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{throw new Error('HEXAW input must be UTF-8 text');}
-    const output=source |> compileHEXAW |> ((module)=>module.bytes);
+    const output=source |> assembleWasm;
     await writeOutput(options.output,output);
   }else{
     const output=bytes |> ((input)=>dumpWasm(input,{format:options.format,codeOnly:options.codeOnly,strict:options.strict}));

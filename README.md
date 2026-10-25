@@ -28,8 +28,9 @@ renamed to distinguish it from an existing WebAssembly language.
 | [`test`](test) | CLI, binary round-trip and native WASM differential tests |
 | [`scripts`](scripts) | Build, offline package test, local Workshop server and publication checks |
 
-The repository root is private in npm. **Only `packages/cli` publishes as
-`hexaw`**; the Workshop is kept in GitHub and excluded from the npm archive.
+Two npm packages share this repository: **`hexaw`** is the installable CLI;
+**`hexaw-repository`** contains the repository/Workshop sources. The CLI archive
+contains no Workshop or build-time dependencies.
 
 ## Develop
 
@@ -60,6 +61,7 @@ consumers need neither the fork compiler nor Go at runtime.
 
 ```sh
 node packages/cli/dist/cli.js assemble examples/add.hexaw -o artifacts/add.wasm
+node packages/cli/dist/cli.js --bin examples/add.hexaw -o artifacts/add.wasm
 node packages/cli/dist/cli.js artifacts/add.wasm
 node packages/cli/dist/cli.js dump artifacts/add.wasm --source
 node packages/cli/dist/cli.js dump artifacts/add.wasm --json
@@ -91,7 +93,7 @@ Do not open `index.html` directly with `file://`.
 npm run check
 ```
 
-This builds with the fork, runs the tests, creates `artifacts/hexaw-0.1.0.tgz`,
+This builds with the fork, runs the tests, creates `artifacts/hexaw-0.2.0.tgz`,
 installs that exact archive into a fresh offline consumer, and verifies:
 
 - the npm `hexaw` executable and public JavaScript exports;
@@ -102,50 +104,63 @@ installs that exact archive into a fresh offline consumer, and verifies:
 The core tests additionally compare arithmetic, conversions, control flow,
 function calls, memory, traps and undo against the native WebAssembly engine.
 
-## Publish the first npm version
-
-The manifest is prepared for the **unscoped `hexaw`** package, version **0.1.0**.
-Neither a GitHub repository nor a successful dry run reserves an npm name; the
-name is claimed only after a successful npm publication. Registry availability
-can change before that publication.
-
-From this checkout:
+## Publish both npm packages
 
 ```sh
 npm ci
-npm run check
-npm publish --workspace packages/cli --access public --dry-run
-
 npm login
 npm whoami
-npm run publish:cli
+npm run publish:all -- --dry-run
+npm run publish:all
 ```
 
-`publish:cli` publishes only the CLI workspace. Its `prepublishOnly` hook runs
-the build, tests and real archive smoke test. Authenticate with the intended npm
-maintainer account and complete any npm-required 2FA/browser step. No credentials
-belong in this repository.
+`publish:all` verifies matching versions, runs the build, tests and installed
+archive checks once, then publishes **hexaw** followed by **hexaw-repository**.
+It stops on the first failure. The two npm publications are separate operations;
+if the CLI succeeds and the source package fails, finish with
+`npm publish --workspaces=false --access public` after correcting the error.
+`publish:cli` remains available for publishing only the CLI. Authenticate with
+the intended npm maintainer account and complete npm's required authentication.
 
 Once publication succeeds, verify it with:
 
 ```sh
-npm view hexaw@0.1.0 name version bin
-npx --yes hexaw@0.1.0 --version
+npm view hexaw@0.2.0 name version bin
+npm view hexaw-repository@0.2.0 name version
 ```
 
-Each name/version pair is immutable on npm. Bump `packages/cli/package.json` for
-subsequent releases, update the lockfile and rerun the package checks.
+For the next patch release, update both versions and the lockfile together:
 
-## Scope of 0.1.0
+```sh
+npm version patch --workspaces --include-workspace-root --no-git-tag-version
+```
 
-The decoder recognizes **175 scalar instructions**. It can emit editable source
-for the assembler's supported subset. For a valid binary outside that subset,
-the default/JSON dump preserves all bytes as explicitly marked `RAW` records,
-including a decoder diagnostic; `--strict` rejects that fallback. Modern WASM
-extensions are not silently presented as decoded HEXAW instructions.
+## Scope of 0.2.0
 
-The debugger's narrower execution and memory limits remain documented in the
-Workshop field guide. The initial release prioritizes a useful, installable CLI.
+The shared instruction table maps **571 opcodes**: Core Wasm 3.0, threads/atomics,
+and five legacy exception-handling opcodes. This includes all 172 MVP instructions,
+SIMD/relaxed SIMD, GC, typed function references, tail calls, exceptions,
+nontrapping conversions and bulk memory/table operations. See the generated
+[instruction reference](docs/instructions.md).
+
+`hexaw -b source.hexaw -o module.wasm` and `hexaw --bin source.hexaw` compile
+HEXAW to WASM; omitted output means binary stdout. The `assemble` command remains
+supported. Both the original compact `FN` syntax and the lossless
+[binary-layout syntax](docs/binary-source.md) are accepted. `--source` selects
+compact syntax only when it reconstructs the exact original binary; otherwise
+it uses the layout form. Metadata/custom sections, NaN payloads and padded
+encodings survive unedited layout round trips. Non-code section payloads are
+preserved as `BYTES`; their fields are not yet rendered as semantic directives.
+
+Input remains limited to 64 MiB. CLI validation uses the running Node.js engine;
+its supported features bound which modules it accepts. It never instantiates or
+executes a module. The lower-level codecs do not require native feature support.
+An unknown instruction preserves the rest of its body as RAW, and decoding
+resumes at the next body. `--strict` rejects incomplete decoding.
+
+The reversible debugger additionally executes `BRTABLE` and `CALLIND`, including
+their traps and undo. The other new opcodes have assembly/disassembly support;
+their interpreter execution is separate future work. The Workshop UI is preserved.
 
 ## Credits
 

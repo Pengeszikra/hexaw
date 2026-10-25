@@ -21,7 +21,7 @@ const packed=JSON.parse(run(process.execPath,[npmPath,'pack','--workspace','pack
 assert.equal(packed.length,1);
 const pkg=packed[0];assert.equal(pkg.name,'hexaw');
 const files=pkg.files.map(f=>f.path);
-for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
+for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/assemble.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/core/instruction-set.js','dist/core/instruction-codec.js','dist/core/binary-module.js','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
 assert.ok(files.every(p=>!p.startsWith('src/')&&!p.startsWith('node_modules/')&&!p.startsWith('workshop/')));
 assert.equal(pkg.bundled.length,0);
 const temporary=await mkdtemp(join(tmpdir(),'hexaw-package-'));
@@ -39,12 +39,29 @@ try{
   const recovered=join(temporary,'recovered.hexaw');await writeFile(recovered,text);
   const rebuilt=join(temporary,'rebuilt.wasm');run(process.execPath,[bin,'assemble',recovered,'-o',rebuilt],temporary);
   assert.deepEqual(await readFile(rebuilt),Buffer.from(original));
+  const binaryFlag=join(temporary,'binary-flag.wasm');run(process.execPath,[bin,'--bin',recovered,'-o',binaryFlag],temporary);
+  assert.deepEqual(await readFile(binaryFlag),Buffer.from(original));
+  const binaryStdout=spawnSync(process.execPath,[bin,'-b','-'],{cwd:temporary,input:text,timeout:10000});
+  assert.equal(binaryStdout.status,0,String(binaryStdout.stderr));assert.deepEqual(binaryStdout.stdout,Buffer.from(original));assert.equal(binaryStdout.stderr.length,0);
   const json=JSON.parse(run(process.execPath,[bin,'dump','-','--json'],temporary,{input:Buffer.from(original)}));
   assert.equal(json.size,original.length);assert.equal(json.decoded,true);
   const api='import {dumpWasm,compileHEXAW,hexawContext,inspectWasm} from "hexaw"; import {Debugger} from "hexaw/core"; const p=compileHEXAW("FN 0\\nRES\\nCONST 42\\nEND"); if(new Debugger(p.decoded).run().result[0].value!==42)throw Error("result"); if(!dumpWasm(p.bytes).includes("CONST 42"))throw Error("dump"); if(!inspectWasm(p.bytes).decoded)throw Error("decode"); console.log("API OK")';
   assert.equal(run(process.execPath,['--input-type=module','-e',api],temporary),'API OK');
   const info=JSON.parse(await readFile(join(temporary,'node_modules/hexaw/dist/build-info.json'),'utf8'));
   assert.equal(info.compiler,'@pengeszikra/typescript');assert.equal(info.compilerVersion,'7.1.0-pipeline.1');
+  const modernApi='import {INSTRUCTIONS,assembleWasm,decodeBinary,disassembleBinary} from "hexaw"; const b=assembleWasm("FN 0\\nRES\\nFCONST NaN\\nTRUNCSATF\\nEND");if(INSTRUCTIONS.length!==571)throw Error("opcodes");if(new WebAssembly.Instance(new WebAssembly.Module(b)).exports.fn00()!==0)throw Error("result");if(Buffer.compare(Buffer.from(b),Buffer.from(assembleWasm(disassembleBinary(decodeBinary(b))))))throw Error("layout");console.log("MODERN API OK")';
+  assert.equal(run(process.execPath,['--input-type=module','-e',modernApi],temporary),'MODERN API OK');
+  const typesFile=join(temporary,'public-api-types.mts');
+  await writeFile(typesFile,'import {assembleWasm,decodeBinary,INSTRUCTIONS} from "hexaw"; const bytes=assembleWasm("FN 0\\nEND"); new WebAssembly.Module(bytes); const opcode:number=INSTRUCTIONS[0].opcode; for(const s of decodeBinary(bytes).sections)for(const b of s.bodies)for(const op of b.ops){const name:string=op.name;const offset:number=op.offset;void name;void offset;}void opcode;');
+  run(process.execPath,[join(root,'node_modules/@pengeszikra/typescript/bin/tspipe.mjs'),'--noEmit','--strict','--skipLibCheck','--target','ES2022','--module','NodeNext','--moduleResolution','NodeNext',typesFile],temporary);
   console.log(`PASS ${pkg.name}@${pkg.version}: ${pkg.files.length} packaged files, offline installation, npm executable, CLI dump, source round trip, stdin JSON, public API and TS+|> build identity.`);
   console.log(`Archive: ${archive}`);
 }finally{await rm(temporary,{recursive:true,force:true});}
+const rootPackage=JSON.parse(await readFile(join(root,'package.json'),'utf8'));
+assert.equal(rootPackage.version,pkg.version,'Both published package versions must match');
+const sourcePack=JSON.parse(run(process.execPath,[npmPath,'pack','--workspaces=false','--ignore-scripts','--json','--pack-destination',join(root,'artifacts')]))[0];
+assert.equal(sourcePack.name,'hexaw-repository');
+const sourceFiles=sourcePack.files.map(f=>f.path);
+for(const path of ['workshop/index.html','workshop/app.js','packages/cli/src/core/hexaw-core.js','packages/cli/src/core/instruction-set.js','packages/cli/src/core/instruction-codec.js','scripts/publish.mjs','docs/instructions.md','docs/binary-source.md'])assert.ok(sourceFiles.includes(path),`Source package missing ${path}`);
+assert.ok(sourceFiles.every(p=>!p.startsWith('node_modules/')&&!p.startsWith('artifacts/')));
+console.log(`PASS ${sourcePack.name}@${sourcePack.version}: Workshop, shared engine, sources, publication script and instruction documentation packaged.`);

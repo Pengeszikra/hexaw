@@ -19,7 +19,8 @@ file. Use `--source` for editable HEXAW text, or `--code-only` to focus on code.
 
 ## Install and use
 
-Requires Node.js **22.18 or later**. Once version 0.1.0 has been published:
+Requires Node.js **22.18 or later**. Advanced WASM features require support in the
+running Node.js engine.
 
 ```sh
 npm install -g hexaw
@@ -50,6 +51,8 @@ cat example.wasm | hexaw dump - --json
 
 # Assemble a supported HEXAW program into a real WASM module.
 hexaw assemble example.hexaw -o example.wasm
+hexaw -b example.hexaw -o example.wasm
+hexaw --bin example.hexaw > example.wasm
 
 hexaw --help
 hexaw --version
@@ -84,13 +87,13 @@ for hexadecimal numeric literals. Comments start with `;` or `//`.
 ## JavaScript and TypeScript API
 
 ```js
-import { dumpWasm, compileHEXAW, inspectWasm } from 'hexaw';
+import { dumpWasm, assembleWasm, inspectWasm } from 'hexaw';
 import { readFile } from 'node:fs/promises';
 
 const bytes = await readFile('example.wasm');
 console.log(dumpWasm(bytes));
 const source = dumpWasm(bytes, { format: 'source' });
-const module = compileHEXAW(source);
+const rebuiltBytes = assembleWasm(source);
 const inspection = inspectWasm(bytes);
 console.log(inspection.records); // offset, bytes, kind, section, owner, text, depth
 ```
@@ -98,24 +101,46 @@ console.log(inspection.records); // offset, bytes, kind, section, owner, text, d
 Type declarations are included. The shared assembler and reversible interpreter
 are also available from `hexaw/core`; the browser Workshop uses the same engine.
 
-## First-release coverage
+## Instruction coverage and binary output
 
-- **175 scalar instructions**, i32/i64/f32/f64, locals, direct calls, mutable
-  constant-initialized globals, blocks, loops, if/else and relative branches.
-- Memory loads/stores, including narrow accesses; one 32-bit, unshared memory.
-  Dump inspection can read memories without an explicit maximum and does not
-  allocate their linear memory. The assembler and debugger have stricter bounds.
-- Valid binaries outside the decoder subset remain usable in the default and
-  JSON dumps: they are explicitly identified as `RAW`, with the reason included.
-  Use `--strict` to reject this fallback. No unknown bytes are guessed as opcodes.
-- External imports, tables, indirect calls, SIMD, GC, references, multi-value,
-  `br_table`, bulk memory and other extensions are not decoded in 0.1.0.
-- `--source` requires an encodable module: one result per function/block, mutable
-  globals, UTF-8 data and bounded memory within assembler limits. Text output is
-  canonical; custom sections and original noncanonical encodings are not retained
-  when reassembling it. Use the default/JSON/hex dump to preserve original bytes.
-- Binary input limit: 64 MiB. WASM validation uses the executing Node.js engine.
-  Validation never instantiates or runs a module, including its start function.
+Version 0.2 maps **571 opcodes**: the complete Core Wasm 3.0 instruction set,
+threads/atomics, and five legacy exception opcodes. Every instruction has a
+HEXAW mnemonic and an immediate codec, including multi-byte opcode identifiers.
+The [complete instruction table](https://github.com/Pengeszikra/hexaw/blob/main/docs/instructions.md)
+lists names, opcodes and operands. SIMD names retain their lane shapes, for
+example `I32X4ADD` and `I8X16SHUFFLE`.
+
+`-b`/`--bin` assemble UTF-8 source. With `-o`, output is written atomically to
+that file; otherwise the raw WASM bytes go to stdout. Formatting options such as
+`--json` cannot be combined with binary output. `assemble ... -o ...` is retained.
+
+Compact `FN` syntax is preserved and now includes `BRTABLE`, `CALLIND`, `TABLE`
+and `ELEM`, plus instructions that fit its scalar declarations. Advanced types,
+imports and other module metadata use the bracket-free **WASM 1 layout syntax**.
+`--source` emits compact source when byte-exact reconstruction is possible;
+otherwise it emits layout source. Both forms compile with `assembleWasm` and
+`--bin`. `compileHEXAW`/`hexaw/core` retain the compact assembler/debugger API.
+
+Layout source preserves non-code section payloads with `BYTES` directives and
+renders code as mnemonics. Unedited round trips retain custom sections, NaN bit
+patterns, padded LEB128, local groups and original indices. Editing an instruction
+updates its encoding, body length and code-section length automatically.
+See the [layout/operand guide](https://github.com/Pengeszikra/hexaw/blob/main/docs/binary-source.md).
+
+The low-level `encodeInstruction`, `decodeInstruction`, `BinaryReader`,
+`decodeBinary`, `disassembleBinary` and `assembleBinary` APIs are exported too.
+`inspectWasm().binary` exposes the full opcode model; `.decoded` is the narrower
+debugger model and may be null even when all opcodes decode successfully.
+
+Unknown instructions preserve bytes through the end of their body; decoding
+resumes at the next body. `--strict` rejects incomplete decoding. The CLI's 64 MiB
+limit and native Node.js validation remain. Validation never instantiates or
+runs a module, including its start function. The codecs can inspect features
+unsupported by the local engine; the CLI accepts only engine-valid modules.
+
+The reversible interpreter now executes `BRTABLE` and `CALLIND` as well as its
+original scalar subset. Assembly/disassembly support for an opcode does not imply
+that the Workshop interpreter executes it.
 
 ## Built with TS+|>
 

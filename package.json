@@ -1,10 +1,18 @@
 {
   "name": "hexaw-repository",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "HEXAW CLI and browser Workshop",
-  "workspaces": ["packages/cli"],
-  "engines": { "node": ">=22.18" },
+  "files": ["README.md", "LICENSE", "docs", "examples", "workshop", "packages/cli/src", "packages/cli/package.json", "packages/cli/tsconfig.json", "scripts", "test"],
+  "author": "Péter Vívó (Pengeszikra)",
+  "repository": {"type": "git", "url": "git+https://github.com/Pengeszikra/hexaw.git"},
+  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
+  "workspaces": [
+    "packages/cli"
+  ],
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
@@ -12,11 +20,13 @@
     "check": "npm run build && npm test && npm run test:package",
     "dev:workshop": "node scripts/serve-workshop.mjs",
     "pack:cli": "npm pack --workspace packages/cli --pack-destination artifacts",
+    "publish:all": "node scripts/publish.mjs",
     "publish:cli": "npm publish --workspace packages/cli --access public"
   },
   "devDependencies": {
     "@pengeszikra/typescript": "7.1.0-pipeline.1",
-    "@types/node": "22.18.0"
+    "@types/node": "22.18.0",
+    "wabt": "1.0.39"
   },
   "license": "MIT"
 }

@@ -11,6 +11,9 @@ export interface Rule {
   readonly width?: number;
   readonly store?: boolean;
   readonly signed?: boolean;
+  readonly prefix?: number;
+  readonly encoding?: string;
+  readonly feature?: string;
 }
 export interface Instruction {
   name: string;
@@ -49,6 +52,8 @@ export interface DecodedModule {
   otherExports: Array<{ name: string; kind: number; index: number }>;
   globals: Array<{ id: number; type: NumericType; value: NumericValue; mutable: boolean }>;
   memory: { min: number; max: number | null } | null;
+  table?: { min: number; max: number | null } | null;
+  elements?: Array<{offset:number;functions:number[]}>;
   data: Array<{ offset: number; bytes: Uint8Array }>;
   types: Array<{ params: NumericType[]; results: NumericType[] }>;
   sections: Section[];

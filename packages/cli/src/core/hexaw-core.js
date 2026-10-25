@@ -2,7 +2,9 @@
  * The rule table is the single source of truth for syntax, opcodes and types.
  * Compilation produces an annotated binary; debugging decodes that binary.
  */
-export const VERSION = '0.1.0';
+import {INSTRUCTIONS} from './instruction-set.js';
+import {BinaryReader,decodeInstruction,encodeInstruction} from './instruction-codec.js';
+export const VERSION = '0.2.0';
 export const TYPES = Object.freeze({i32:0x7f,i64:0x7e,f32:0x7d,f64:0x7c});
 const TYPE_NAMES = Object.fromEntries(Object.entries(TYPES).map(([k,v])=>[v,k]));
 const PREFIXES = {i32:'',i64:'L',f32:'F',f64:'D'};
@@ -34,7 +36,7 @@ function index(text,line=0){if(!/^\d+$|^0x[0-9a-f]+$/i.test(String(text)))fail(`
 function blockType(text,line){if(text===undefined)return null;const t=String(text).toLowerCase();const v=({i:'i32',l:'i64',f:'f32',d:'f64'})[t]||t;if(!TYPES[v])fail(`Unknown type ${text}; use I32, I64, F32 or F64`,line);return v;}
 export const RULES = Object.create(null);
 const add=(name,opcode,wasm,kind='simple',extra={})=>RULES[name]=Object.freeze({name,opcode,wasm,kind,...extra});
-for(const [name,kind] of Object.entries({FN:'fn',EXP:'export',MEM:'memorydecl',DATA:'data'}))RULES[name]=Object.freeze({name,kind,directive:true});
+for(const [name,kind] of Object.entries({FN:'fn',EXP:'export',MEM:'memorydecl',DATA:'data',TABLE:'tabledecl',ELEM:'element'}))RULES[name]=Object.freeze({name,kind,directive:true});
 for(const [type,prefix] of Object.entries(PREFIXES))for(const [name,kind] of Object.entries({PAR:'param',LOC:'local',RES:'result',GLB:'global'}))RULES[prefix+name]=Object.freeze({name:prefix+name,type,kind,directive:true});
 add('TRAP',0x00,'unreachable');add('NOP',0x01,'nop');
 add('BLOCK',0x02,'block','block');add('LOOP',0x03,'loop','block');add('IF',0x04,'if','block');
@@ -58,8 +60,9 @@ for(const [type,p,base] of [['f32','F',0x8b],['f64','D',0x99]])floatOps.forEach(
 const conversions=[['WRAP',0xa7,'i64','i32','wrap_i64'],['TRUNCF',0xa8,'f32','i32','trunc_f32_s'],['TRUNCFU',0xa9,'f32','i32','trunc_f32_u'],['TRUNCD',0xaa,'f64','i32','trunc_f64_s'],['TRUNCDU',0xab,'f64','i32','trunc_f64_u'],['LEXTEND',0xac,'i32','i64','extend_i32_s'],['LEXTENDU',0xad,'i32','i64','extend_i32_u'],['LTRUNCF',0xae,'f32','i64','trunc_f32_s'],['LTRUNCFU',0xaf,'f32','i64','trunc_f32_u'],['LTRUNCD',0xb0,'f64','i64','trunc_f64_s'],['LTRUNCDU',0xb1,'f64','i64','trunc_f64_u'],['FCONVERT',0xb2,'i32','f32','convert_i32_s'],['FCONVERTU',0xb3,'i32','f32','convert_i32_u'],['FCONVERTL',0xb4,'i64','f32','convert_i64_s'],['FCONVERTLU',0xb5,'i64','f32','convert_i64_u'],['FDEMOTE',0xb6,'f64','f32','demote_f64'],['DCONVERT',0xb7,'i32','f64','convert_i32_s'],['DCONVERTU',0xb8,'i32','f64','convert_i32_u'],['DCONVERTL',0xb9,'i64','f64','convert_i64_s'],['DCONVERTLU',0xba,'i64','f64','convert_i64_u'],['DPROMOTE',0xbb,'f32','f64','promote_f32'],['REINTERPRETF',0xbc,'f32','i32','reinterpret_f32'],['LREINTERPRETD',0xbd,'f64','i64','reinterpret_f64'],['FREINTERPRET',0xbe,'i32','f32','reinterpret_i32'],['DREINTERPRETL',0xbf,'i64','f64','reinterpret_i64']];
 for(const [name,opcode,from,type,operation] of conversions)add(name,opcode,type+'.'+operation,'convert',{from,type,operation});
 for(const [name,opcode,type,width] of [['EXTEND8',0xc0,'i32',8],['EXTEND16',0xc1,'i32',16],['LEXTEND8',0xc2,'i64',8],['LEXTEND16',0xc3,'i64',16],['LEXTEND32',0xc4,'i64',32]])add(name,opcode,`${type}.extend${width}_s`,'extend',{type,width});
+for(const rule of INSTRUCTIONS)if(!RULES[rule.name])RULES[rule.name]=Object.freeze({...rule,kind:'encoded'});
 Object.freeze(RULES);
-export const OPCODES=Object.freeze(Object.fromEntries(Object.values(RULES).filter(r=>!r.directive).map(r=>[r.opcode,r])));
+export const OPCODES=Object.freeze(Object.fromEntries(Object.values(RULES).filter(r=>!r.directive&&!r.prefix).map(r=>[r.opcode,r])));
 const ALIASES={CON:'CONST',LCON:'LCONST',FCON:'FCONST',DCON:'DCONST',PUSH:'CONST',BR_IF:'BRIF',RETURN:'RET',LOCAL:'LOC'};
 
 function tokenize(source){return source.split(/\r?\n/).map((raw,i)=>{
@@ -70,7 +73,7 @@ function tokenize(source){return source.split(/\r?\n/).map((raw,i)=>{
   }return {raw,line:i+1,tokens};
 }).filter(x=>x.tokens.length);}
 export function parseHEXAW(source){
-  const mod={source,functions:[],globals:[],memory:null,data:[],exports:[]};let fn=null;
+  const mod={source,functions:[],globals:[],memory:null,table:null,elements:[],data:[],exports:[]};let fn=null;
   for(const row of tokenize(source)){
     let name=row.tokens[0].text.toUpperCase();name=ALIASES[name]||name;
     const rule=RULES[name],a=row.tokens.slice(1).map(t=>t.text),line=row.line;
@@ -79,6 +82,8 @@ export function parseHEXAW(source){
     if(rule.kind==='fn'){check(1);if(fn)fail('Close the previous function with END',line);const id=index(a[0],line);if(id!==mod.functions.length)fail(`Function indices must be consecutive; expected ${mod.functions.length}`,line);fn={id,line,params:[],locals:[],results:[],ops:[],blocks:[],bodyStarted:false};mod.functions.push(fn);continue;}
     if(rule.kind==='export'){check(2);if(fn)fail('EXP belongs outside a function',line);mod.exports.push({name:String(a[0]),index:index(a[1],line),line});continue;}
     if(rule.kind==='memorydecl'){check(1,2);if(fn||mod.memory)fail('Declare one MEM outside functions',line);const min=index(a[0],line),max=a[1]===undefined?Math.max(min,16):index(a[1],line);if(min>max||max>256)fail('Memory limits: 0 ≤ initial ≤ maximum ≤ 256 pages',line);mod.memory={min,max,line};continue;}
+    if(rule.kind==='tabledecl'){check(1,2);if(fn||mod.table)fail('Declare one TABLE outside functions',line);const min=index(a[0],line),max=a[1]===undefined?null:index(a[1],line);if(max!==null&&min>max)fail('TABLE minimum exceeds maximum',line);mod.table={min,max,line};continue;}
+    if(rule.kind==='element'){check(2,65536);if(fn)fail('ELEM belongs outside functions',line);mod.elements.push({offset:index(a[0],line),functions:a.slice(1).map(x=>index(x,line)),line});continue;}
     if(rule.kind==='data'){check(2);if(fn)fail('DATA belongs outside a function',line);if(!row.tokens[2]?.quoted)fail('DATA expects a quoted UTF-8 string',line);mod.data.push({offset:index(a[0],line),bytes:te.encode(a[1]),line});continue;}
     if(rule.kind==='global'){check(2);if(fn)fail('GLB belongs outside a function',line);const id=index(a[0],line);if(id!==mod.globals.length)fail(`Expected global index ${mod.globals.length}`,line);mod.globals.push({id,type:rule.type,value:parseValue(a[1],rule.type,line),line});continue;}
     if(!fn)fail(`${name} needs a function; start with FN 00`,line);
@@ -88,7 +93,14 @@ export function parseHEXAW(source){
       else{check(1);const id=index(a[0],line),expected=fn.params.length+fn.locals.length;if(id!==expected)fail(`Expected local index ${expected}`,line);if(rule.kind==='param'&&fn.locals.length)fail('Declare parameters before locals',line);fn[rule.kind==='param'?'params':'locals'].push({id,type:rule.type,line});}continue;
     }
     fn.bodyStarted=true;const op={name,rule,line,args:[],depth:fn.blocks.length};
-    if(rule.kind==='const'){check(1);op.value=parseValue(a[0],rule.type,line);op.args=[op.value];}
+    if(rule.kind==='encoded'){
+      if(name==='CALLIND'&&a.length===1)a.push('0');
+      try{op.encoded=encodeInstruction(name,a);}catch(error){fail(error.message,line);}
+      op.args=a;
+      if(name==='BRTABLE')for(const label of a)if(index(label,line)>fn.blocks.length)fail('Branch depth is outside this function',line);
+      if(name==='TRYTABLE'||name==='TRY')fn.blocks.push({name,op,elseSeen:false});
+    }
+    else if(rule.kind==='const'){check(1);op.value=parseValue(a[0],rule.type,line);op.args=[op.value];}
     else if(['index','branch'].includes(rule.kind)){check(1);op.args=[index(a[0],line)];if(rule.kind==='branch'&&op.args[0]>fn.blocks.length)fail('Branch depth is outside this function',line);}
     else if(rule.kind==='block'){check(0,1);op.blockType=blockType(a[0],line);op.args=op.blockType?[op.blockType]:[];fn.blocks.push({name,op,elseSeen:false});}
     else if(rule.kind==='memarg'){check(0,2);const offset=a[0]===undefined?0:index(a[0],line),align=a[1]===undefined?Math.log2(rule.width):index(a[1],line);if(align>Math.log2(rule.width))fail('Alignment exponent exceeds the natural alignment',line);op.args=[offset,align];}
@@ -106,6 +118,8 @@ export function parseHEXAW(source){
     if((op.rule.kind==='memarg'||op.rule.kind==='memory')&&!mod.memory)fail('Memory instruction requires a MEM declaration',op.line);
   }
   if(mod.data.length&&!mod.memory)fail('DATA requires MEM',mod.data[0].line);
+  if(mod.elements.length&&!mod.table)fail('ELEM requires TABLE',mod.elements[0].line);
+  for(const element of mod.elements)for(const id of element.functions)if(id>=mod.functions.length)fail('ELEM refers to missing function',element.line);
   for(const d of mod.data)if(d.offset+d.bytes.length>mod.memory.min*65536)fail('DATA lies outside initial memory',d.line);
   const names=new Set();for(const e of mod.exports){if(e.index>=mod.functions.length)fail(`Export refers to missing function ${e.index}`,e.line);if(names.has(e.name))fail(`Duplicate export ${e.name}`,e.line);names.add(e.name);}
   for(const f of mod.functions)if(!mod.exports.some(e=>e.index===f.id)){let name=`fn${String(f.id).padStart(2,'0')}`;while(names.has(name))name+='_';mod.exports.push({name,index:f.id,line:f.line});names.add(name);}
@@ -126,13 +140,15 @@ export function assemble(mod){
   const types=[],typeMap=new Map();for(const f of mod.functions){const key=f.params.map(p=>p.type).join(',')+'->'+f.results.map(r=>r.type).join(',');if(!typeMap.has(key)){typeMap.set(key,types.length);types.push(f);}f.typeIndex=typeMap.get(key);}
   const t=[uint(types.length,'Type count',{section:'type'})];for(const f of types){const m={section:'type',owner:`fn${f.id}`,line:f.line};t.push(atom([0x60],'functype','Function type',m),uint(f.params.length,'Parameter count',m));for(const p of f.params)t.push(val(p.type,`Parameter ${p.id} type`,{...m,line:p.line}));t.push(uint(f.results.length,'Result count',m));for(const r of f.results)t.push(val(r.type,'Result type',{...m,line:r.line}));}section(1,'type',t);
   section(3,'function',[uint(mod.functions.length,'Function count',{section:'function'}),...mod.functions.map(f=>uint(f.typeIndex,`Function ${f.id} type index`,{section:'function',owner:`fn${f.id}`,line:f.line}))]);
+  if(mod.table){const m={section:'table',line:mod.table.line};section(4,'table',[uint(1,'Table count',m),atom([0x70],'valtype','Function reference',m),uint(mod.table.max===null?0:1,'Table limits flags',m),uint(mod.table.min,'Initial table entries',m),...(mod.table.max===null?[]:[uint(mod.table.max,'Maximum table entries',m)])]);}
   if(mod.memory){const m={section:'memory',line:mod.memory.line};section(5,'memory',[uint(1,'Memory count',m),atom([1],'limits','Minimum and maximum present',m),uint(mod.memory.min,'Initial pages',m),uint(mod.memory.max,'Maximum pages',m)]);}
   if(mod.globals.length){const gs=[uint(mod.globals.length,'Global count',{section:'global'})];for(const g of mod.globals){const m={section:'global',owner:`global${g.id}`,line:g.line};gs.push(val(g.type,'Global type',m),atom([1],'mutability','Mutable global',m),...constant(g.type,g.value,m),atom([0xb],'opcode','Initializer end',m));}section(6,'global',gs);}
   const ex=[uint(mod.exports.length,'Export count',{section:'export'})];for(const e of mod.exports){const m={section:'export',owner:`fn${e.index}`,line:e.line};ex.push(...str(e.name,'Export name',m),atom([0],'exportkind','Function export',m),uint(e.index,'Export function index',m));}section(7,'export',ex);
+  if(mod.elements?.length){const elements=[uint(mod.elements.length,'Element segment count',{section:'element'})];for(const e of mod.elements){const m={section:'element',line:e.line};elements.push(uint(0,'Active table-0 segment',m),...constant('i32',e.offset,m),atom([0xb],'opcode','Element offset end',m),uint(e.functions.length,'Element count',m),...e.functions.map(id=>uint(id,'Function index',m)));}section(9,'element',elements);}
   const code=[uint(mod.functions.length,'Code body count',{section:'code'})];
   for(const f of mod.functions){const m={section:'code',owner:`fn${f.id}`,line:f.line};const groups=[];for(const l of f.locals){const prev=groups.at(-1);if(prev?.type===l.type)prev.count++;else groups.push({type:l.type,count:1,line:l.line});}
     const body=[uint(groups.length,'Local declaration group count',m)];for(const g of groups)body.push(uint(g.count,'Local count',{...m,line:g.line}),val(g.type,'Local type',{...m,line:g.line}));
-    for(const op of f.ops){const r=op.rule,om={...m,line:op.line,depth:op.depth,instruction:op};body.push(atom([r.opcode],'opcode',r.wasm,om));
+    for(const op of f.ops){const r=op.rule,om={...m,line:op.line,depth:op.depth,instruction:op};if(r.kind==='encoded'){body.push(atom(op.encoded,'opcode',r.wasm,om));continue;}body.push(atom([r.opcode],'opcode',r.wasm,om));
       if(r.kind==='const')body.push(atom(r.type[0]==='i'?sleb(op.value):floatBytes(op.value,r.type),r.type[0]==='i'?'sleb128':r.type,`${r.type} constant`,{...om,value:op.value}));
       if(['index','branch'].includes(r.kind))body.push(uint(op.args[0],r.kind==='branch'?'Relative label depth':r.wasm.split('.')[0]+' index',om));
       if(r.kind==='block')body.push(op.blockType?val(op.blockType,'Block result type',om):atom([0x40],'blocktype','Block has no result',om));
@@ -160,18 +176,21 @@ export function decodeWASM(input,options={}){
   const bytes=input instanceof Uint8Array?input:new Uint8Array(input);
   if(bytes.length>(inspect?64:2)*1024*1024)fail(`Binary import limit: ${inspect?64:2} MiB`);
   if(!WebAssembly.validate(bytes))fail('The browser rejected this WASM binary');
-  const r=new Reader(bytes);r.take(8);const types=[],funcTypes=[],functions=[],exports=[],otherExports=[],globals=[],data=[],sections=[];let memory=null;
+  const r=new Reader(bytes);r.take(8);const types=[],funcTypes=[],functions=[],exports=[],otherExports=[],globals=[],data=[],elements=[],sections=[];let memory=null,table=null;
   while(r.p<r.end){const offset=r.p,id=r.byte(),len=r.unsigned(),end=r.p+len;if(end>r.end)fail('Section exceeds binary');const s=new Reader(bytes,r.p,end);r.p=end;sections.push({id,offset,end,payload:s.p});
     if(id===0)continue;
     if(id===1){const n=s.unsigned();for(let i=0;i<n;i++){if(s.byte()!==0x60)fail('GC/recursive types are outside HEXAW 0.1');const np=s.unsigned(),params=[];for(let j=0;j<np;j++)params.push(s.type());const nr=s.unsigned(),results=[];if(nr>1)fail('Multiple function results are outside HEXAW 0.1');for(let j=0;j<nr;j++)results.push(s.type());types.push({params,results});}}
     else if(id===2){if(s.unsigned())fail('Imported functions, memories and globals are outside HEXAW 0.1');}
     else if(id===3){const n=s.unsigned();for(let i=0;i<n;i++)funcTypes.push(s.unsigned());}
+    else if(id===4){if(s.unsigned()!==1||s.byte()!==0x70)fail('Debugger requires one funcref table');const flags=s.unsigned();if(flags>1)fail('Unsupported table limits');table={min:s.unsigned(),max:flags?s.unsigned():null};}
     else if(id===5){const n=s.unsigned();if(n!==1)fail('Exactly one memory is supported');const flags=s.unsigned();if(flags>1||(!inspect&&flags!==1))fail('Debugger requires bounded, unshared 32-bit memory');const min=s.unsigned(),max=flags?s.unsigned():null;if(!inspect&&max>256)fail('Debugger memory limit: 256 pages');memory={min,max};}
     else if(id===6){const n=s.unsigned();for(let i=0;i<n;i++){const type=s.type(),mutable=!!s.byte(),opcode=s.byte(),rr=OPCODES[opcode];if(rr?.kind!=='const'||rr.type!==type)fail('Only constant global initializers are supported');const value=s.value(type);if(s.byte()!==0xb)fail('Unsupported global initializer');globals.push({id:i,type,mutable,value});}}
     else if(id===7){const n=s.unsigned();for(let i=0;i<n;i++){const name=s.string(),kind=s.byte(),idx=s.unsigned();if(kind===0)exports.push({name,index:idx});else if(kind===2)otherExports.push({name,kind,index:idx});else fail('Only function and memory exports are supported');}}
+    else if(id===9){const n=s.unsigned();for(let i=0;i<n;i++){if(s.unsigned()!==0||s.byte()!==0x41)fail('Debugger requires active table-0 elements');const offset=s.signed(32)>>>0;if(s.byte()!==0xb)fail('Unsupported element offset expression');const count=s.unsigned(),ids=[];if(count>s.end-s.p)fail('Element count exceeds section');for(let j=0;j<count;j++)ids.push(s.unsigned());elements.push({offset,functions:ids});}}
     else if(id===10){const n=s.unsigned();if(n>1024)fail('Debugger function limit: 1024');for(let i=0;i<n;i++){
       const size=s.unsigned(),bodyEnd=s.p+size;if(bodyEnd>s.end)fail('Function body exceeds code section');const freader=new Reader(bytes,s.p,bodyEnd);s.p=bodyEnd;const sig=types[funcTypes[i]];if(!sig)fail('Unknown function type');const f={id:i,typeIndex:funcTypes[i],params:[...sig.params],results:[...sig.results],locals:[],ops:[],offset:freader.p};const count=freader.unsigned();for(let j=0;j<count;j++){const q=freader.unsigned(),t=freader.type();if(q+f.locals.length+f.params.length>4096)fail('Debugger local limit: 4096 per function');for(let k=0;k<q;k++)f.locals.push(t);}
-      const blocks=[];while(freader.p<freader.end){const start=freader.p,opcode=freader.byte(),rule=OPCODES[opcode];if(!rule)throw new HexawError(`Unsupported opcode 0x${opcode.toString(16)}; this binary uses instructions outside HEXAW 0.1`,0,start);const op={name:rule.name,rule,offset:start,args:[],depth:blocks.length,line:0};
+      const blocks=[];while(freader.p<freader.end){const start=freader.p,opcode=freader.byte();let rule=OPCODES[opcode],encoded=null;if(rule?.kind==='encoded'||opcode>=0xfb&&opcode<=0xfe){const reader=new BinaryReader(bytes,start,freader.end);encoded=decodeInstruction(reader);freader.p=reader.pos;rule=RULES[encoded.name];}if(!rule)throw new HexawError(`Unsupported opcode 0x${opcode.toString(16)}`,0,start);const op={name:rule.name,rule,offset:start,args:encoded?.args||[],depth:blocks.length,line:0};
+        if(rule.kind==='encoded'&&(op.name==='TRYTABLE'||op.name==='TRY'))blocks.push(f.ops.length);
         if(rule.kind==='const'){op.value=freader.value(rule.type);op.args=[op.value];}
         if(['index','branch'].includes(rule.kind))op.args=[freader.unsigned()];
         if(rule.kind==='memarg'){const align=freader.unsigned(),off=freader.unsigned();op.args=[off,align];}
@@ -187,7 +206,7 @@ export function decodeWASM(input,options={}){
     if(s.p!==s.end)throw new HexawError(`Unconsumed bytes in section ${id}`,0,s.p);
   }
   if(!functions.length)fail('This module has no defined functions');
-  return {bytes,functions,exports,otherExports,globals,memory,data,types,sections};
+  return {bytes,functions,exports,otherExports,globals,memory,table,elements,data,types,sections};
 }
 export function compileHEXAW(source){
   const built=assemble(parseHEXAW(source));let nativeModule;
@@ -217,6 +236,8 @@ export function disassembleHEXAW(mod){
   if(mod.otherExports?.length)fail('Memory exports cannot yet be represented in HEXAW source; use a byte dump to preserve them');
   const lines=['; HEXAW · decoded from WebAssembly'];
   if(mod.memory)lines.push(`MEM ${mod.memory.min} ${mod.memory.max}`);
+  if(mod.table)lines.push(`TABLE ${mod.table.min}`+(mod.table.max===null?'':` ${mod.table.max}`));
+  for(const e of mod.elements||[])lines.push(`ELEM ${e.offset} ${e.functions.join(' ')}`);
   for(const g of mod.globals){if(!g.mutable)fail('Immutable globals cannot be round-tripped to HEXAW 0.1');lines.push(`${PREFIXES[g.type]}GLB ${g.id} ${formatValue(g.value)}`);}
   for(const d of mod.data){let text;try{text=td.decode(d.bytes);}catch{fail('Non-UTF-8 data cannot be represented by DATA strings in HEXAW 0.1');}lines.push(`DATA ${d.offset} ${JSON.stringify(text)}`);}
   for(const e of mod.exports)lines.push(`EXP ${JSON.stringify(e.name)} ${e.index}`);
@@ -258,7 +279,7 @@ function convert(rule,v){
 }
 
 export class Debugger {
-  constructor(module,entry=0,args=[]){this.module=module;this.breakpoints=new Set();this.history=[];this.trace=[];this.steps=0;this.state='ready';this.error=null;this.result=[];this.stack=[];this.frames=[];this.globals=module.globals.map(g=>({type:g.type,value:g.value}));this.memory=new Uint8Array((module.memory?.min||0)*65536);for(const d of module.data){if(d.offset+d.bytes.length>this.memory.length)fail('Data segment is out of memory bounds');this.memory.set(d.bytes,d.offset);}this.pushFrame(entry,args.map((v,i)=>({type:module.functions[entry]?.params[i],value:v})));}
+  constructor(module,entry=0,args=[]){this.module=module;this.breakpoints=new Set();this.history=[];this.trace=[];this.steps=0;this.state='ready';this.error=null;this.result=[];this.stack=[];this.frames=[];this.globals=module.globals.map(g=>({type:g.type,value:g.value}));this.memory=new Uint8Array((module.memory?.min||0)*65536);for(const d of module.data){if(d.offset+d.bytes.length>this.memory.length)fail('Data segment is out of memory bounds');this.memory.set(d.bytes,d.offset);}for(const e of module.elements||[])if(!module.table||e.offset+e.functions.length>module.table.min)fail('Element segment is out of table bounds');this.pushFrame(entry,args.map((v,i)=>({type:module.functions[entry]?.params[i],value:v})));}
   get currentFrame(){return this.frames.at(-1);}
   get current(){const f=this.currentFrame;return f?this.module.functions[f.fn].ops[f.pc]:null;}
   pushFrame(id,args){const fn=this.module.functions[id];if(!fn)throw new Error('Unknown function');if(args.length!==fn.params.length)throw new Error(`Function ${id} needs ${fn.params.length} arguments`);if(this.frames.length>=512)throw new Error('Debugger call-depth limit: 512');const locals=args.map((v,i)=>({type:fn.params[i],value:normalize(v.value,fn.params[i])}));for(const t of fn.locals)locals.push({type:t,value:zero(t)});this.frames.push({fn:id,pc:0,base:this.stack.length,locals,controls:[{kind:'function',height:this.stack.length,result:fn.results[0]||null,end:fn.ops.length-1,start:-1}]});}
@@ -290,10 +311,19 @@ export class Debugger {
         case'DROP':this.pop();break;
         case'SELECT':{const c=this.pop('i32').value,b=this.pop(),a=this.pop(b.type);this.stack.push(c?a:b);break;}
         case'BR':this.branch(op.args[0]);break;case'BRIF':if(this.pop('i32').value)this.branch(op.args[0]);break;
+        case'BRTABLE':{const selector=this.pop('i32').value>>>0;this.branch(Number(op.args[Math.min(selector,op.args.length-1)]));break;}
         case'ELSE':f.pc=op.endIndex;break;
         case'END':if(op.functionEnd)this.leaveFunction();else{const c=f.controls.pop(),v=c.result?this.pop(c.result):null;this.stack.length=c.height;if(v)this.stack.push(v);}break;
         case'RET':this.leaveFunction();break;
         case'CALL':{const target=this.module.functions[op.args[0]],args=[];for(let i=target.params.length-1;i>=0;i--)args.unshift(this.pop(target.params[i]));this.pushFrame(target.id,args);break;}
+        case'CALLIND':{
+          if(Number(op.args[1])!==0)throw new Error('Debugger supports table 0');
+          const index=this.pop('i32').value>>>0;if(!this.module.table||index>=this.module.table.min)throw new Error('undefined element');
+          let id=null;for(const e of this.module.elements||[])if(index>=e.offset&&index<e.offset+e.functions.length)id=e.functions[index-e.offset];
+          if(id===null)throw new Error('uninitialized element');const target=this.module.functions[id],expected=this.module.types[Number(op.args[0])];
+          if(!expected||target.params.join(',')!==expected.params.join(',')||target.results.join(',')!==expected.results.join(','))throw new Error('indirect call type mismatch');
+          const args=[];for(let i=target.params.length-1;i>=0;i--)args.unshift(this.pop(target.params[i]));this.pushFrame(target.id,args);break;
+        }
         case'MSIZE':this.push('i32',this.memory.length/65536);break;
         case'MGROW':{const delta=this.pop('i32').value>>>0,old=this.memory.length/65536,max=this.module.memory?.max??0;if(delta+old>max)this.push('i32',-1);else{const mem=new Uint8Array((delta+old)*65536);mem.set(this.memory);this.memory=mem;this.push('i32',old);}break;}
         default:throw new Error(`Unsupported instruction ${op.name}`);
