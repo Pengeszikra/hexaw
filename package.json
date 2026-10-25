@@ -1,7 +1,6 @@
 {
   "name": "hexaw-repository",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
   "description": "HEXAW CLI and browser Workshop",
   "workspaces": ["packages/cli"],
