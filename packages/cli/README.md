@@ -90,6 +90,15 @@ W filename saves, and SOURCE filename exports HEXAW. The VM executes its
 documented subset; all mapped opcodes remain available for disassembly. Loading
 never executes native code or a start function. Ctrl-C interrupts execution.
 
+`A [address]` enters continuous assembly. Type one HEXAW instruction per line;
+Enter shows its hex bytes and advances the FILE address. An empty Enter applies
+the complete validated draft as one undoable edit. `:UNDO` removes the last draft
+line; Esc/Ctrl-C/`:CANCEL` discard the draft. F1 lists mnemonics, F3 recalls the
+original instruction, and Tab completes mnemonics. The one-line
+`A address mnemonic operands` form remains available. Instruction operands use
+source radix (decimal or `0x`), and END is an instruction, not an exit command.
+See `examples/assembly.hexaw` and `examples/assembly.commands` in the repository.
+
 Command scripts work through stdin; errors are reported but do not end the
 session, and scripts exit nonzero if a command failed. From the repository,
 `npm run shell -- examples/add.hexaw` builds and starts the monitor directly.

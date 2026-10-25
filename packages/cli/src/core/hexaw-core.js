@@ -4,7 +4,7 @@
  */
 import {INSTRUCTIONS} from './instruction-set.js';
 import {BinaryReader,decodeInstruction,encodeInstruction} from './instruction-codec.js';
-export const VERSION = '0.3.0';
+export const VERSION = '0.4.0';
 export const TYPES = Object.freeze({i32:0x7f,i64:0x7e,f32:0x7d,f64:0x7c});
 const TYPE_NAMES = Object.fromEntries(Object.entries(TYPES).map(([k,v])=>[v,k]));
 const PREFIXES = {i32:'',i64:'L',f32:'F',f64:'D'};

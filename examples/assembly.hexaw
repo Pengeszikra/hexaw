@@ -1,0 +1,8 @@
+; A small function ready for the interactive A command.
+; Try: CONST 20, CONST 22, ADD, END, then an empty Enter.
+EXP "answer" 0
+
+FN 0
+  RES
+  CONST 0
+END

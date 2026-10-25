@@ -9,6 +9,7 @@ import {Debugger,formatValue,parseValue,hex} from './core/hexaw-core.js';
 import type {NumericType,NumericValue,StackValue} from './core/hexaw-core.js';
 import {BinaryReader,decodeInstruction,encodeInstruction} from './core/instruction-codec.js';
 import {disassembleBinary,SECTION_NAMES} from './core/binary-module.js';
+import {INSTRUCTIONS} from './core/instruction-set.js';
 
 const MAX_INPUT=64*1024*1024,MAX_PAGE=0x10000,MAX_UNDO=16*1024*1024;
 export const SHELL_HELP=`HEXAW interactive monitor — DEBUG / SST inspired
@@ -23,6 +24,7 @@ export const SHELL_HELP=`HEXAW interactive monitor — DEBUG / SST inspired
   S start end|L length list   Search bytes or quoted UTF-8 text
   E address list             Enter bytes or quoted UTF-8 text
   F start end|L length list   Fill with a repeating byte pattern
+  A [address]               Assemble successive lines, showing bytes on Enter
   A address mnemonic args    Replace one instruction; recompute WASM sizes
   UNDO / REDO                Undo / redo a byte or assembly edit
   W file                     Write the working binary atomically
@@ -48,11 +50,41 @@ Use 0d42 for decimal. End addresses are inclusive; lengths must be positive.
 Instruction operands in A follow HEXAW source syntax (decimal, or 0x-prefixed).
 Quoted strings accept doubled quote marks. Loading never runs a start function.
 `;
+const mnemonicWidth=Math.max(...INSTRUCTIONS.map(r=>r.name.length))+2;
+const mnemonicColumns=Math.max(1,Math.floor(80/mnemonicWidth));
+export const ASSEMBLY_HELP=`HEXAW ASSEMBLE MODE — SST inspired
+
+Enter one instruction per line; its FILE offset and hex bytes appear immediately.
+Each line replaces one original instruction; extra lines grow the function.
+A function's final END removes its remaining original instructions.
+An empty Enter validates and applies the whole draft as one undoable edit.
+END is a WASM instruction, not the command to leave this mode.
+
+  :UNDO                     Remove the last draft instruction
+  :LIST                     Show the draft and its byte encodings
+  :CANCEL / Esc / Ctrl-C     Discard the draft and return to the monitor
+  ? / :HELP / F1            Show assembly help and mnemonics
+  F3                        Recall the original instruction at this position
+
+Operands follow HEXAW source syntax: decimal by default, or 0x-prefixed hex.
+FILE addresses are provisional until WASM body/section lengths are rebuilt.
+If validation fails, the draft stays open for correction; the buffer is unchanged.
+
+`+INSTRUCTIONS.map(r=>r.name).reduce((rows:string[],name:string,index:number)=>{if(index%mnemonicColumns===0)rows.push('');rows[rows.length-1]+=name.padEnd(mnemonicWidth);return rows;},[]).map(row=>row.trimEnd()).join('\n')+'\n';
 export const SHELL_COMMANDS=['L','D','U','NEXT','PREV','I','FN','S','E','F','A','UNDO','REDO','W','SOURCE','V','H','CALL','T','P','G','BACK','Z','R','K','DM','BP','BC','HELP','QUIT'];
+export const ASSEMBLY_COMMANDS=[...INSTRUCTIONS.map(r=>r.name),':UNDO',':LIST',':CANCEL',':HELP'];
 interface Word {value:string;quoted:boolean}
 interface Edit {offset:number;before:Uint8Array;after:Uint8Array;beforeRevision:number;afterRevision:number}
 interface View {kind:'D'|'U'|'DM';start:number;length:number}
+type BinaryModule=NonNullable<WasmInspection['binary']>;
+interface AssemblyPosition {body:number;index:number}
+interface AssemblyDraft extends AssemblyPosition {module:BinaryModule;address:number;size:number;ops:ReturnType<typeof decodeInstruction>[];input:string[]}
 export interface CommandResult {text:string;quit?:boolean}
+
+function blockDelta(op:ReturnType<typeof decodeInstruction>):number {
+  if(op.rule.prefix)return 0;
+  return [2,3,4,6,31].includes(op.rule.opcode)?1:[11,24].includes(op.rule.opcode)?-1:0;
+}
 
 /** DOS-style quotes: two consecutive delimiters represent one literal delimiter. */
 function words(line:string):Word[]{
@@ -126,6 +158,8 @@ export class HexawSession {
   private stopped=false;
   private moduleDiagnostic='';
   private code:DumpRecord[]=[];
+  private assembly:AssemblyDraft|null=null;
+  private assemblyPosition:AssemblyPosition|null=null;
   readonly breakpoints=new Set<number>();
   inspection:WasmInspection|null=null;
   vm:Debugger|null=null;
@@ -134,6 +168,21 @@ export class HexawSession {
   constructor(readonly cwd=process.cwd()){}
   get bytes():Uint8Array{return this.buffer.slice();}
   get dirty():boolean{return this.revision!==this.savedRevision;}
+  get assembling():boolean{return this.assembly!==null;}
+  get assemblyPending():boolean{return !!this.assembly?.ops.length;}
+  get assemblyAddress():number|null{return this.assembly?this.assembly.address+this.assembly.size:null;}
+  get prompt():string{return this.assembly?`A${this.assemblyPending?'*':''} ${hex(this.assemblyAddress!,8)}> `:this.dirty?'hexaw*> ':'hexaw> ';}
+  get help():string{return this.assembling?ASSEMBLY_HELP:SHELL_HELP;}
+  get completions():readonly string[]{return this.assembling?ASSEMBLY_COMMANDS:SHELL_COMMANDS;}
+  get originalInstruction():string|null {
+    const draft=this.assembly;if(!draft)return null;
+    return draft.module.sections.find(s=>s.id===10)!.bodies[draft.body].ops[draft.index+draft.ops.length]?.text??null;
+  }
+  cancelAssembly(reason='cancelled'):string {
+    if(!this.assembly)return '';
+    const n=this.assembly.ops.length;this.assembly=null;
+    return `Assembly ${reason} · ${n} draft instruction(s) discarded · working buffer unchanged`;
+  }
   interrupt():void {this.stopped=true;}
   private requireBuffer():void {if(!this.loaded)throw new Error('Load a file first: L filename');}
   private requireVM():Debugger {if(!this.vm)throw new Error('Prepare a paused VM first: CALL function [args]');return this.vm;}
@@ -142,6 +191,7 @@ export class HexawSession {
     try{this.inspection=inspectWasm(this.buffer);}catch(error){this.moduleDiagnostic=(error as Error).message;}
     this.code=this.inspection?.records.filter(r=>r.kind==='instruction')??[];
     this.vm=null;this.breakpoints.clear();this.mCursor=0;
+    this.assemblyPosition=null;
     if(resetViews){this.dCursor=0;this.uCursor=this.instructions()[0]?.offset??0;this.lastView=null;}
     else{this.dCursor=Math.min(this.dCursor,this.buffer.length);this.uCursor=Math.min(this.uCursor,this.buffer.length);if(this.lastView?.kind==='DM')this.lastView=null;}
   }
@@ -152,7 +202,7 @@ export class HexawSession {
     if(extname(filename).toLowerCase()==='.hexaw'){
       let source:string;try{source=new TextDecoder('utf-8',{fatal:true}).decode(input);}catch{throw new Error('HEXAW source must be UTF-8');}bytes=assembleWasm(source);
     }
-    this.buffer=Uint8Array.from(bytes);this.filename=filename;this.loaded=true;this.revision=0;this.savedRevision=0;this.nextRevision=0;this.undoEdits=[];this.redoEdits=[];this.refresh();
+    this.buffer=Uint8Array.from(bytes);this.filename=filename;this.loaded=true;this.revision=0;this.savedRevision=0;this.nextRevision=0;this.undoEdits=[];this.redoEdits=[];this.assembly=null;this.refresh();
     return `Loaded ${JSON.stringify(path)} · ${hex(bytes.length)}h (${bytes.length}) bytes\n${this.validation()}`;
   }
   private validation():string {
@@ -197,6 +247,60 @@ export class HexawSession {
     const next=new Uint8Array(this.buffer.length-remove.length+insert.length);next.set(this.buffer.subarray(0,record.offset));next.set(insert,record.offset);next.set(this.buffer.subarray(record.offset+remove.length),record.offset+insert.length);
     this.buffer=next;this.revision=redo?record.afterRevision:record.beforeRevision;to.push(record);this.refresh(false);return `${redo?'Redid':'Undid'} edit at FILE ${hex(record.offset,8)} · VM reset`;
   }
+  private beginAssembly(args:Word[]):string {
+    exactly(args,0,1);this.requireBuffer();const module=this.inspection?.binary;
+    if(!module)throw new Error('No decoded WASM module; load a .wasm or .hexaw file first');
+    const bodies=module.sections.find(s=>s.id===10)?.bodies??[];
+    let position=args.length?null:this.assemblyPosition;
+    if(!position){
+      const address=args.length?number(args[0].value):bodies[0]?.ops[0]?.offset;
+      for(const [body,b] of bodies.entries()){const index=b.ops.findIndex(op=>op.offset===address);if(index>=0){position={body,index};break;}}
+      if(!position)throw new Error('Address must be a known instruction boundary in a defined function');
+    }
+    const body=bodies[position.body];if(body.tail)throw new Error('Assembly mode requires a fully decoded function body');
+    const address=body.ops[position.index]?.offset??body.end;
+    this.assembly={...position,module,address,size:0,ops:[],input:[]};
+    return `ASSEMBLE MODE · FILE ${hex(address,8)} · Enter shows bytes; empty Enter applies; :CANCEL discards; F1 help`;
+  }
+  private assemblyRow(draft:AssemblyDraft,index:number,address:number):string {
+    return `${hex(address,8)} : ${[...draft.ops[index].bytes].map(b=>hex(b)).join(' ').padEnd(23)} : ${draft.input[index]}`;
+  }
+  private finishAssembly():string {
+    const draft=this.assembly!;
+    if(!draft.ops.length){this.assemblyPosition={body:draft.body,index:draft.index};this.assembly=null;return 'Assembly closed · no instructions entered';}
+    const module=structuredClone(draft.module),body=module.sections.find(s=>s.id===10)!.bodies[draft.body];
+    // Closing the function explicitly also retires its old tail. An inner END
+    // only closes its block; partial patches otherwise retain untouched code.
+    let depth=1,closed=false;for(let i=0;i<draft.index;i++)depth+=blockDelta(body.ops[i]);
+    for(const op of draft.ops){depth+=blockDelta(op);if(!op.rule.prefix&&op.rule.opcode===11&&depth===0)closed=true;}
+    body.ops.splice(draft.index,closed?body.ops.length-draft.index:draft.ops.length,...draft.ops.map(op=>({...op,depth:0})));
+    let next:Uint8Array;
+    try{next=assembleWasm(disassembleBinary(module));}
+    catch(error){throw new Error(`Assembly not applied: ${(error as Error).message}\nDraft retained; :UNDO removes a line, :CANCEL discards it, empty Enter retries.`);}
+    const message=this.edit(next),rebuilt=this.inspection!.binary!.sections.find(s=>s.id===10)!.bodies[draft.body];
+    const index=draft.index+draft.ops.length,start=rebuilt.ops[draft.index].offset,cursor=rebuilt.ops[index]?.offset??rebuilt.end;
+    this.assemblyPosition={body:draft.body,index};this.assembly=null;this.uCursor=start;this.lastView=null;
+    return `Applied ${draft.ops.length} instruction(s) · FILE ${hex(start,8)}..${hex(cursor-1,8)} · NEXT ${hex(cursor,8)}`+(start!==draft.address?`\nFILE addresses rebased ${draft.address<start?'+':'-'}${hex(Math.abs(start-draft.address))}h after WASM length encoding changed`:'')+`\n${message}`;
+  }
+  private assembleLine(line:string):string {
+    const draft=this.assembly!;if(!line.trim())return this.finishAssembly();
+    if(line.length>MAX_PAGE)throw new Error('Assembly input limit: 10000h characters per line');
+    const tokens=words(line.replace(/\/\/.*$/,''));if(!tokens.length)return '';
+    const command=tokens[0].value.toUpperCase(),args=tokens.slice(1);
+    if(command==='?'||command===':HELP'){exactly(args,0);return ASSEMBLY_HELP;}
+    if(command===':CANCEL'){exactly(args,0);return this.cancelAssembly();}
+    if(command===':UNDO'){
+      exactly(args,0);const op=draft.ops.pop();if(!op)return 'No draft instructions to undo';draft.input.pop();draft.size-=op.bytes.length;
+      return `Removed ${op.name} · NEXT FILE ${hex(this.assemblyAddress!,8)}`;
+    }
+    if(command===':LIST'){
+      exactly(args,0);let address=draft.address;return draft.ops.length?draft.ops.map((op,index)=>{const row=this.assemblyRow(draft,index,address);address+=op.bytes.length;return row;}).join('\n'):'No draft instructions';
+    }
+    const encoded=encodeInstruction(command,args.map(w=>w.value)),op=decodeInstruction(new BinaryReader(encoded));
+    if(draft.size+encoded.length>MAX_PAGE)throw new Error('Assembly draft limit: 10000h bytes; apply or cancel this draft first');
+    const address=this.assemblyAddress!;draft.ops.push(op);draft.input.push([command,...args.map(w=>w.value)].join(' '));draft.size+=encoded.length;
+    return this.assemblyRow(draft,draft.ops.length-1,address);
+  }
   private registers():string {
     const vm=this.requireVM(),current=vm.current,frame=vm.currentFrame,fault=vm.state==='trapped'?vm.trace.at(-1):null;
     return [`STATE=${vm.state}  FN=${frame?hex(frame.fn):'--'}  PC=${fault?hex(fault.offset,8):current?hex(current.offset,8):'--------'}  STEPS=${hex(vm.steps)}h (${vm.steps})`,
@@ -229,6 +333,7 @@ export class HexawSession {
     return `${reason} · ${executed} instruction(s)\n${last?`LAST ${hex(last.offset,8)}  ${last.instruction}\n`:''}${this.registers()}`;
   }
   async execute(line:string):Promise<CommandResult>{
+    if(this.assembly)return {text:this.assembleLine(line)};
     const tokens=words(line);if(!tokens.length){if(line.trim())return {text:''};return {text:this.page(false)};}
     const command=tokens[0].value.toUpperCase(),args=tokens.slice(1);let text='';
     switch(command){
@@ -246,7 +351,7 @@ export class HexawSession {
       case'FN':{
         exactly(args,0,1);this.requireBuffer();const bodies=this.inspection?.binary?.sections.find(s=>s.id===10)?.bodies??[];
         if(!args.length){text=bodies.length?bodies.slice(0,256).map((b,i)=>`BODY ${hex(i)}  FILE ${hex(b.ops[0]?.offset??b.offset,8)}  ${b.ops.length} instructions`+(this.inspection?.decoded?.exports.filter(e=>e.index===i).map(e=>`  ${JSON.stringify(e.name)}`).join('')??'')).join('\n'):'No defined function bodies';if(bodies.length>256)text+='\n(first 256 bodies)';}
-        else{const exported=this.inspection?.decoded?.exports.find(e=>e.name===args[0].value),index=exported?.index??number(args[0].value),body=bodies[index];if(!body)throw new Error('Unknown body index or export');text=this.view('U',[{value:hex(body.ops[0]?.offset??body.offset),quoted:false}]);}break;
+        else{const exported=this.inspection?.decoded?.exports.find(e=>e.name===args[0].value),index=exported?.index??number(args[0].value),body=bodies[index];if(!body)throw new Error('Unknown body index or export');this.assemblyPosition={body:index,index:0};text=this.view('U',[{value:hex(body.ops[0]?.offset??body.offset),quoted:false}]);}break;
       }
       case'S':case'F':{
         this.requireBuffer();const q=range(args,0,0,this.buffer.length,true),pattern=byteList(args.slice(q.used));if(q.start+q.length>this.buffer.length)throw new Error('Range extends beyond the buffer');
@@ -260,7 +365,8 @@ export class HexawSession {
         this.requireBuffer();if(args.length<2)throw new Error('Use E address byte-list');const address=number(args[0].value),bytes=byteList(args.slice(1));if(bytes.length>MAX_PAGE||address+bytes.length>this.buffer.length)throw new Error('Patch is outside the buffer or exceeds 10000h bytes');const next=this.buffer.slice();next.set(bytes,address);text=this.edit(next);break;
       }
       case'A':{
-        this.requireBuffer();if(args.length<2)throw new Error('Use A file-offset mnemonic operands');const address=number(args[0].value),original=this.inspection?.binary;if(!original)throw new Error('No decoded WASM module');
+        if(args.length<2){text=this.beginAssembly(args);break;}
+        this.requireBuffer();const address=number(args[0].value),original=this.inspection?.binary;if(!original)throw new Error('No decoded WASM module');
         const module=structuredClone(original),body=module.sections.flatMap(s=>s.bodies).find(b=>b.ops.some(op=>op.offset===address));if(!body)throw new Error('Address must be a known instruction boundary');
         const encoded=encodeInstruction(args[1].value,args.slice(2).map(w=>w.value)),replacement=decodeInstruction(new BinaryReader(encoded)),index=body.ops.findIndex(op=>op.offset===address);
         body.ops[index]={...replacement,offset:address,depth:body.ops[index].depth};const next=assembleWasm(disassembleBinary(module));text=this.edit(next);break;

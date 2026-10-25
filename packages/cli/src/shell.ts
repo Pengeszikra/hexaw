@@ -1,16 +1,22 @@
 import {createInterface} from 'node:readline';
-import {HexawSession,SHELL_COMMANDS,SHELL_HELP} from './session.js';
+import {HexawSession} from './session.js';
 
 export async function runShell(initialPath?:string):Promise<number>{
   const session=new HexawSession(),terminal=!!(process.stdin.isTTY&&process.stdout.isTTY);
-  process.stdout.write('HEXAW interactive monitor · ? help · D dump · U unassemble · CALL prepare VM · Q quit\n');
+  process.stdout.write('HEXAW interactive monitor · ? help · D dump · U unassemble · A assemble · CALL prepare VM · Q quit\n');
   if(initialPath){process.stdout.write(await session.load(initialPath)+'\n');process.stdout.write((await session.execute('D')).text+'\n');}
   const rl=createInterface({input:process.stdin,output:process.stdout,terminal,historySize:500,removeHistoryDuplicates:true,crlfDelay:Infinity,
-    completer(line:string):[string[],string]{const prefix=line.toUpperCase();return [SHELL_COMMANDS.filter(command=>command.startsWith(prefix)),line];}});
-  const prompt=()=>{if(terminal){rl.setPrompt(session.dirty?'hexaw*> ':'hexaw> ');rl.prompt();}};
+    completer(line:string):[string[],string]{const prefix=line.toUpperCase();return [session.completions.filter(command=>command.startsWith(prefix)),line];}});
+  const prompt=(preserveCursor=false)=>{if(terminal){rl.setPrompt(session.prompt);rl.prompt(preserveCursor);}};
   let hadErrors=false;
-  const interrupt=()=>{if(session.busy)session.interrupt();else rl.close();};
-  const keypress=(_text:string,key:{name?:string})=>{if(key?.name==='f1'&&!session.busy){process.stdout.write('\n'+SHELL_HELP);prompt();}};
+  const cancel=()=>{rl.write(null,{ctrl:true,name:'u'});process.stdout.write('\n'+session.cancelAssembly()+'\n');prompt();};
+  const interrupt=()=>{if(session.busy)session.interrupt();else if(session.assembling)cancel();else rl.close();};
+  const keypress=(_text:string,key:{name?:string})=>{
+    if(session.busy)return;
+    if(key?.name==='f1'){process.stdout.write('\n'+session.help);prompt(true);}
+    else if(key?.name==='escape'&&session.assembling)cancel();
+    else if(key?.name==='f3'&&session.assembling){const instruction=session.originalInstruction;if(instruction!==null){rl.write(null,{ctrl:true,name:'u'});rl.write(instruction);}}
+  };
   rl.on('SIGINT',interrupt);process.on('SIGINT',interrupt);if(terminal)process.stdin.on('keypress',keypress);
   try{
     prompt();
@@ -19,6 +25,9 @@ export async function runShell(initialPath?:string):Promise<number>{
       catch(error){hadErrors=true;process.stderr.write(`hexaw: ${(error as Error).message}\n`);}
       prompt();
     }
-  }finally{rl.close();process.off('SIGINT',interrupt);if(terminal)process.stdin.off('keypress',keypress);}
+  }finally{
+    if(session.assembling){if(session.assemblyPending)hadErrors=true;process.stdout.write(session.cancelAssembly('closed at EOF')+'\n');}
+    rl.close();process.off('SIGINT',interrupt);if(terminal)process.stdin.off('keypress',keypress);
+  }
   return !terminal&&hadErrors?1:0;
 }

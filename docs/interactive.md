@@ -48,7 +48,8 @@ Q
 `G` resumes and finishes with 42. Enter on an empty line repeats the last view
 at its next page; `-` shows its previous page. Up/down recall history, Tab
 completes commands and F1 shows help. Ctrl-C interrupts a running trace; at an
-idle prompt it exits. Ctrl-D / EOF also exits. `hexaw*>` marks unsaved edits.
+idle prompt it exits. In assembly mode, Ctrl-C/Esc cancel the draft and return
+to the monitor. Ctrl-D / EOF exits. `hexaw*>` marks unsaved edits.
 
 ## Commands
 
@@ -62,6 +63,7 @@ idle prompt it exits. Ctrl-D / EOF also exits. `hexaw*>` marks unsaved edits.
 | `S start end\|L length bytes` | Search bytes or quoted UTF-8 text. |
 | `E address bytes` | Replace bytes in the working buffer. |
 | `F start end\|L length bytes` | Fill a range with a repeated pattern. |
+| `A [address]` | Enter successive instructions with immediate hex feedback; empty Enter applies. |
 | `A address mnemonic operands` | Replace one instruction; validate and recompute WASM lengths. |
 | `UNDO`, `REDO` | Undo/redo byte and assembly edits. |
 | `W file` | Atomically save the working binary to an explicit filename. |
@@ -84,7 +86,8 @@ decimal or `0x10` for explicit hex. WASM files have flat offsets, not segments.
 
 Instruction operands after `A` retain HEXAW source conventions: decimal by
 default, or `0x` for hex. Thus `A 27 CONST 42` writes decimal 42 at hexadecimal
-offset 27. It must replace an existing instruction and leave a valid module.
+offset 27. The one-line form must replace an existing instruction and leave a
+valid module. Continuous assembly validates the complete draft on exit.
 Float CALL arguments use decimal, Infinity or NaN. Integer arguments retain
 their exact bits, including i64 values.
 
@@ -100,6 +103,77 @@ H FF 1
 **MEM offsets** into VM linear memory. Output labels the address space. `R`'s
 PC is a FILE offset. `FN` uses defined code-body indices; export names are
 available for modules represented by the debugger model.
+
+## Continuous assembly: `A`
+
+```sh
+npm run shell -- examples/assembly.hexaw
+```
+
+Type `A`, then enter instructions one at a time:
+
+```text
+A
+CONST 20
+CONST 22
+ADD
+END
+
+CALL answer
+G
+```
+
+**Press Enter on an empty line after END.** Each instruction's machine bytes
+appear immediately, for example `41 14` for `CONST 20`, `41 16` for `CONST 22`,
+and `6A` for `ADD`. The `A 000000xx>` prompt advances by the actual encoded
+length; `A*` means it contains draft instructions. The example returns 42.
+`END` is an actual WASM instruction; it does not exit assembly mode.
+
+`A address` chooses an existing instruction boundary using a hexadecimal FILE
+offset. Bare `A` resumes the last assembly position, initially the first defined
+function's first instruction. `FN body` or `FN export` selects another function
+for a subsequent bare `A`. Each entered line replaces one original instruction;
+additional lines grow that function once its original instructions are exhausted.
+The function's final END removes any remaining original instructions, allowing
+a shorter replacement. An inner block's END keeps the following code; a partial
+patch without a final END also retains untouched instructions. Another function
+is never overwritten. Use a loaded `.hexaw` skeleton to set up FN/PAR/RES/LOC declarations;
+assembly mode accepts the 571 instruction mnemonics, not module declarations.
+
+| While assembling | Action |
+| --- | --- |
+| Empty Enter | Validate and apply the entire draft as one undoable edit. |
+| `:UNDO` | Remove the most recently entered instruction and move the cursor back. |
+| `:LIST` | Display the current draft with offsets, bytes and instructions. |
+| `:CANCEL`, Esc, Ctrl-C | Discard the draft and return to the monitor. |
+| `?`, `:HELP`, F1 | Show assembly help and the mnemonic list. |
+| F3 | Recall the original instruction at this position for editing. |
+| Tab, up/down | Complete mnemonics/assembly controls; recall input history. |
+
+Intermediate stack/type/block states may be incomplete. The working buffer and
+VM remain unchanged until empty Enter succeeds. Syntax errors keep the cursor
+at the same address. A validation error retains the draft: use `:UNDO` to correct
+it or `:CANCEL` to abandon it, then retry empty Enter. After applying it, monitor
+`UNDO`/`REDO` undo/redo the entire assembly edit; `W file` saves the binary.
+
+Operands keep HEXAW source radix: `CONST 42` means decimal 42, `CONST 0x2A`
+means the same. `CALL 0` inside assembly mode assembles a call instruction;
+leave the mode before using monitor CALL/T/G. Comments beginning with `;`, `//`
+or `#` do not end the draft. An actually empty/whitespace-only line does.
+
+FILE addresses shown during entry are provisional: changed body or section
+lengths can require longer LEB128 size prefixes. Applying the draft reports its
+final range and any rebase. `U` then starts at the final address. Drafts are
+limited to 10000h encoded bytes and individual input lines to 10000h characters.
+EOF discards an open draft; scripts exit nonzero if instructions were pending.
+
+The complete scripted example runs from the repository root:
+
+```sh
+node packages/cli/dist/cli.js shell < examples/assembly.commands
+```
+
+It assembles 42, runs it, then undoes the whole edit and runs the original 0.
 
 ## Memory and reverse tracing
 
@@ -124,8 +198,9 @@ Explore the call with `T`/`P` and inspect call frames with `K`.
 
 `E`, `F` and `A` change a working copy; `W file` saves it. Loading another file
 or quitting discards unsaved edits. Byte edits may temporarily invalidate the
-buffer; D/search/edit undo still work. `V` reports its status. `A` validates a
-replacement before committing it. Each edit/undo/redo resets the VM and clears
+buffer; D/search/edit undo still work. `V` reports its status. One-line `A`
+validates a replacement before committing it; continuous `A` validates its
+whole draft on empty Enter. Each applied edit/undo/redo resets the VM and clears
 breakpoints, avoiding stale instruction addresses.
 
 Byte-edit history has a 16 MiB budget, evicting oldest edits as needed. Execution
@@ -162,3 +237,13 @@ SST's use with David Weise in his [first-person retrospective](https://devblogs.
 The earlier [SST 1.3 archive listing](https://vetusware.com/download/SST%20Debugger%201.3/?id=13154)
 uses *Scroll Screen Tracer*. HEXAW adopts the interaction ideas with WASM-specific
 commands and address spaces.
+
+SST's `A [address]` is documented on printed pages 7-3 through 7-8
+([the entry/byte-output example is PDF page 144](https://bitsavers.org/pdf/victor/victor9000/Victor_9000_Various_Disk_Tools_Manuals.pdf#page=144)).
+It prompts with a segment:offset address, shows machine code after each entered
+instruction, and advances to the next address. Two consecutive Enter keys
+(the instruction's Enter followed by an empty Enter) return to command mode.
+F1 lists mnemonics, F3 recalls the current instruction, and Esc leaves assembly
+mode. Unlike SST's direct writes to x86 memory, HEXAW stages a draft so structured
+WASM can be validated and its length fields rebuilt together. HEXAW's Esc/Ctrl-C
+discard that draft; successful edits are retained in the monitor undo history.

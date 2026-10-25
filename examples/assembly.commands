@@ -1,0 +1,15 @@
+; Run: node packages/cli/dist/cli.js shell < examples/assembly.commands
+L examples/assembly.hexaw
+A
+CONST 20
+CONST 22
+ADD
+END
+
+U
+CALL answer
+G
+UNDO
+CALL answer
+G
+Q

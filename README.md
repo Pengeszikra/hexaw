@@ -84,6 +84,13 @@ run, break and rewind. `R` shows stack, locals, globals and PC; `DM` dumps VM
 linear memory. `E`, `F` and `A` edit the working binary, `UNDO`/`REDO` undo
 edits, and `W file` saves it. Type `?` or F1 for help.
 
+`A [address]` opens SST-style continuous assembly: enter a HEXAW instruction,
+press Enter to see its bytes, and continue at the next address. An empty Enter
+validates/applies the draft; `:UNDO` corrects the last line, Esc/`:CANCEL` discard
+it, F3 recalls the original instruction, and Tab completes mnemonics. Try
+`npm run shell -- examples/assembly.hexaw`, then `A`, `CONST 20`, `CONST 22`,
+`ADD`, `END`, an empty Enter, `CALL answer`, `G` to assemble and run 42.
+
 After building, `node packages/cli/dist/cli.js -i [file]` and
 `node packages/cli/dist/cli.js shell [file]` open the same monitor. It accepts
 scripts through stdin and real terminals with history and completion. See the
