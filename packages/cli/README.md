@@ -53,6 +53,8 @@ cat example.wasm | hexaw dump - --json
 hexaw assemble example.hexaw -o example.wasm
 hexaw -b example.hexaw -o example.wasm
 hexaw --bin example.hexaw > example.wasm
+hexaw --interactive example.wasm
+hexaw shell
 
 hexaw --help
 hexaw --version
@@ -62,6 +64,36 @@ Output is always plain text unless assembling a binary. Successful commands exit
 with status 0, invalid input/I/O failures with 1, and command-line usage errors
 with 2. Diagnostics go to stderr. A named output file is replaced atomically only
 after successful processing; the input path cannot also be the output path.
+
+## Interactive monitor
+
+`hexaw -i [file]`, `hexaw --interactive [file]` and `hexaw shell [file]` open a
+DEBUG/SST-inspired monitor. D dumps hex/ASCII, U lists HEXAW instructions, and
+Enter continues the current view. Addresses/counts are hexadecimal by default;
+`0d42` selects decimal. Use `?`/F1 for help, arrows for history, Tab for completion
+and Q to exit. Examples:
+
+```text
+D 0 L 20
+U
+CALL add 2A 0
+T
+R
+BACK
+G
+```
+
+CALL prepares a paused reversible VM; T/P/G trace, step over and run; BP/BC
+manage breakpoints; BACK reverses execution. DM displays VM linear memory, while
+D/U use file offsets. E/F/A edit the working binary, UNDO/REDO reverse edits,
+W filename saves, and SOURCE filename exports HEXAW. The VM executes its
+documented subset; all mapped opcodes remain available for disassembly. Loading
+never executes native code or a start function. Ctrl-C interrupts execution.
+
+Command scripts work through stdin; errors are reported but do not end the
+session, and scripts exit nonzero if a command failed. From the repository,
+`npm run shell -- examples/add.hexaw` builds and starts the monitor directly.
+See the [complete interactive guide](https://github.com/Pengeszikra/hexaw/blob/main/docs/interactive.md).
 
 ## A first HEXAW function
 
@@ -103,7 +135,7 @@ are also available from `hexaw/core`; the browser Workshop uses the same engine.
 
 ## Instruction coverage and binary output
 
-Version 0.2 maps **571 opcodes**: the complete Core Wasm 3.0 instruction set,
+The shared table maps **571 opcodes**: the complete Core Wasm 3.0 instruction set,
 threads/atomics, and five legacy exception opcodes. Every instruction has a
 HEXAW mnemonic and an immediate codec, including multi-byte opcode identifiers.
 The [complete instruction table](https://github.com/Pengeszikra/hexaw/blob/main/docs/instructions.md)

@@ -1,12 +1,29 @@
 {
   "name": "hexaw-repository",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "description": "HEXAW CLI and browser Workshop",
-  "files": ["README.md", "LICENSE", "docs", "examples", "workshop", "packages/cli/src", "packages/cli/package.json", "packages/cli/tsconfig.json", "scripts", "test"],
+  "files": [
+    "README.md",
+    "LICENSE",
+    "docs",
+    "examples",
+    "workshop",
+    "packages/cli/src",
+    "packages/cli/package.json",
+    "packages/cli/tsconfig.json",
+    "scripts",
+    "test"
+  ],
   "author": "Péter Vívó (Pengeszikra)",
-  "repository": {"type": "git", "url": "git+https://github.com/Pengeszikra/hexaw.git"},
-  "publishConfig": {"access": "public", "registry": "https://registry.npmjs.org/"},
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Pengeszikra/hexaw.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "workspaces": [
     "packages/cli"
   ],
@@ -19,6 +36,8 @@
     "test:package": "node scripts/test-package.mjs",
     "check": "npm run build && npm test && npm run test:package",
     "dev:workshop": "node scripts/serve-workshop.mjs",
+    "preshell": "npm run build",
+    "shell": "node packages/cli/dist/cli.js --interactive",
     "pack:cli": "npm pack --workspace packages/cli --pack-destination artifacts",
     "publish:all": "node scripts/publish.mjs",
     "publish:cli": "npm publish --workspace packages/cli --access public"

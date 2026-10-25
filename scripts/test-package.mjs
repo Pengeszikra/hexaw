@@ -21,7 +21,7 @@ const packed=JSON.parse(run(process.execPath,[npmPath,'pack','--workspace','pack
 assert.equal(packed.length,1);
 const pkg=packed[0];assert.equal(pkg.name,'hexaw');
 const files=pkg.files.map(f=>f.path);
-for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/assemble.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/core/instruction-set.js','dist/core/instruction-codec.js','dist/core/binary-module.js','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
+for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/assemble.js','dist/shell.js','dist/session.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/core/instruction-set.js','dist/core/instruction-codec.js','dist/core/binary-module.js','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
 assert.ok(files.every(p=>!p.startsWith('src/')&&!p.startsWith('node_modules/')&&!p.startsWith('workshop/')));
 assert.equal(pkg.bundled.length,0);
 const temporary=await mkdtemp(join(tmpdir(),'hexaw-package-'));
@@ -45,6 +45,8 @@ try{
   assert.equal(binaryStdout.status,0,String(binaryStdout.stderr));assert.deepEqual(binaryStdout.stdout,Buffer.from(original));assert.equal(binaryStdout.stderr.length,0);
   const json=JSON.parse(run(process.execPath,[bin,'dump','-','--json'],temporary,{input:Buffer.from(original)}));
   assert.equal(json.size,original.length);assert.equal(json.decoded,true);
+  const monitor=run(process.execPath,[bin,'shell',wasm],temporary,{input:'U\nCALL add 2A 0\nT\nBACK\nG\nQ\n'});
+  assert.match(monitor,/RESULT: i32 0x2A \(42\)/);assert.match(monitor,/Rewound 1/);
   const api='import {dumpWasm,compileHEXAW,hexawContext,inspectWasm} from "hexaw"; import {Debugger} from "hexaw/core"; const p=compileHEXAW("FN 0\\nRES\\nCONST 42\\nEND"); if(new Debugger(p.decoded).run().result[0].value!==42)throw Error("result"); if(!dumpWasm(p.bytes).includes("CONST 42"))throw Error("dump"); if(!inspectWasm(p.bytes).decoded)throw Error("decode"); console.log("API OK")';
   assert.equal(run(process.execPath,['--input-type=module','-e',api],temporary),'API OK');
   const info=JSON.parse(await readFile(join(temporary,'node_modules/hexaw/dist/build-info.json'),'utf8'));
@@ -62,6 +64,6 @@ assert.equal(rootPackage.version,pkg.version,'Both published package versions mu
 const sourcePack=JSON.parse(run(process.execPath,[npmPath,'pack','--workspaces=false','--ignore-scripts','--json','--pack-destination',join(root,'artifacts')]))[0];
 assert.equal(sourcePack.name,'hexaw-repository');
 const sourceFiles=sourcePack.files.map(f=>f.path);
-for(const path of ['workshop/index.html','workshop/app.js','packages/cli/src/core/hexaw-core.js','packages/cli/src/core/instruction-set.js','packages/cli/src/core/instruction-codec.js','scripts/publish.mjs','docs/instructions.md','docs/binary-source.md'])assert.ok(sourceFiles.includes(path),`Source package missing ${path}`);
+for(const path of ['workshop/index.html','workshop/app.js','packages/cli/src/core/hexaw-core.js','packages/cli/src/core/instruction-set.js','packages/cli/src/core/instruction-codec.js','scripts/publish.mjs','docs/instructions.md','docs/binary-source.md','docs/interactive.md','examples/monitor.hexaw'])assert.ok(sourceFiles.includes(path),`Source package missing ${path}`);
 assert.ok(sourceFiles.every(p=>!p.startsWith('node_modules/')&&!p.startsWith('artifacts/')));
 console.log(`PASS ${sourcePack.name}@${sourcePack.version}: Workshop, shared engine, sources, publication script and instruction documentation packaged.`);

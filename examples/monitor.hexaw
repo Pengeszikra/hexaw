@@ -1,0 +1,26 @@
+; Try CALL main, G, DM 0 L 10, BACK 4, DM 0 L 10.
+MEM 1 1
+DATA 0 "HEXAW"
+TABLE 2
+ELEM 0 0
+EXP "inc" 0
+EXP "main" 1
+
+FN 0
+  PAR 0
+  RES
+  GET 0
+  CONST 1
+  ADD
+END
+
+FN 1
+  RES
+  CONST 0
+  CONST 41
+  CONST 0
+  CALLIND 0
+  STORE
+  CONST 0
+  LOAD
+END

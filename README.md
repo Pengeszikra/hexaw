@@ -71,6 +71,25 @@ node packages/cli/dist/cli.js dump artifacts/add.wasm --code-only
 The published executable is `hexaw`. See the [CLI package guide](packages/cli/README.md)
 for stdin/stdout usage, raw hex mode, the JavaScript API and coverage limits.
 
+## Interactive DOS-style monitor
+
+```sh
+npm run shell -- examples/add.hexaw
+```
+
+This builds the checkout and opens `hexaw>` directly. `D` dumps hex/ASCII, `U`
+shows HEXAW instructions, and Enter continues the current page. `CALL add 2A 0`
+prepares a paused VM; `T`, `P`, `G`, `BP` and `BACK` trace, step over calls,
+run, break and rewind. `R` shows stack, locals, globals and PC; `DM` dumps VM
+linear memory. `E`, `F` and `A` edit the working binary, `UNDO`/`REDO` undo
+edits, and `W file` saves it. Type `?` or F1 for help.
+
+After building, `node packages/cli/dist/cli.js -i [file]` and
+`node packages/cli/dist/cli.js shell [file]` open the same monitor. It accepts
+scripts through stdin and real terminals with history and completion. See the
+[interactive guide](docs/interactive.md) for hex number conventions, examples
+and the historical DEBUG/SST references.
+
 ## Run the preserved Workshop
 
 ```sh
@@ -93,7 +112,7 @@ Do not open `index.html` directly with `file://`.
 npm run check
 ```
 
-This builds with the fork, runs the tests, creates `artifacts/hexaw-0.2.0.tgz`,
+This builds with the fork, runs the tests, creates `artifacts/hexaw-0.3.0.tgz`,
 installs that exact archive into a fresh offline consumer, and verifies:
 
 - the npm `hexaw` executable and public JavaScript exports;
@@ -125,8 +144,8 @@ the intended npm maintainer account and complete npm's required authentication.
 Once publication succeeds, verify it with:
 
 ```sh
-npm view hexaw@0.2.0 name version bin
-npm view hexaw-repository@0.2.0 name version
+npm view hexaw@0.3.0 name version bin
+npm view hexaw-repository@0.3.0 name version
 ```
 
 For the next patch release, update both versions and the lockfile together:
@@ -135,7 +154,7 @@ For the next patch release, update both versions and the lockfile together:
 npm version patch --workspaces --include-workspace-root --no-git-tag-version
 ```
 
-## Scope of 0.2.0
+## Scope of 0.3.0
 
 The shared instruction table maps **571 opcodes**: Core Wasm 3.0, threads/atomics,
 and five legacy exception-handling opcodes. This includes all 172 MVP instructions,

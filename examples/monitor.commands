@@ -1,0 +1,11 @@
+L examples/monitor.hexaw
+I
+FN
+U
+CALL main
+DM 0 L 10
+G
+DM 0 L 10
+BACK 4
+DM 0 L 10
+Q

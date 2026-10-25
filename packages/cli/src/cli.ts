@@ -13,9 +13,12 @@ Usage:
   hexaw [dump] <file.wasm|-> [options]
   hexaw -b <file.hexaw|-> [-o <file.wasm|->]
   hexaw assemble <file.hexaw|-> -o <file.wasm|->
+  hexaw -i [file.wasm|file.hexaw]
+  hexaw shell [file.wasm|file.hexaw]
 
 Dump options:
   -b, --bin                Assemble HEXAW to a WASM binary (default: stdout)
+  -i, --interactive        Open the DEBUG / SST inspired interactive monitor
   -o, --output <file>       Write a file instead of stdout
   -f, --format <format>    dump (default), source, json, hex
       --source             Emit editable HEXAW, without byte columns
@@ -33,6 +36,7 @@ Examples:
   hexaw assemble add.hexaw -o add.wasm
   hexaw -b add.hexaw -o add.wasm
   hexaw --bin add.hexaw > add.wasm
+  hexaw -i add.wasm
 
 The opcode table covers Core Wasm 3.0, threads/atomics and legacy exceptions.
 Both compact FN source and WASM 1 binary-layout source can be assembled.
@@ -40,17 +44,18 @@ Native validation requires this Node.js engine to support the module's features.
 Validation never instantiates or executes the input program.
 `;
 class UsageError extends Error {}
-interface Options {command:'dump'|'assemble';input:string;output:string|null;format:DumpFormat;codeOnly:boolean;strict:boolean}
+interface Options {command:'dump'|'assemble'|'shell';input:string;output:string|null;format:DumpFormat;codeOnly:boolean;strict:boolean}
 function parseArgs(args:string[]):Options|'help'|'version' {
   if(args.length===0) return 'help';
   const opts:Options={command:'dump',input:'',output:null,format:'dump',codeOnly:false,strict:false};
-  let explicitCommand=false,endOptions=false,binary=false;
+  let explicitCommand=false,endOptions=false,binary=false,interactive=false;
   for(let i=0;i<args.length;i++){
     const arg=args[i];
     if(!endOptions&&arg==='--'){endOptions=true;continue;}
     if(!endOptions&&(arg==='-h'||arg==='--help')) return 'help';
     if(!endOptions&&(arg==='-V'||arg==='--version')) return 'version';
     if(!endOptions&&(arg==='-b'||arg==='--bin')){binary=true;continue;}
+    if(!endOptions&&(arg==='-i'||arg==='--interactive')){interactive=true;continue;}
     if(!endOptions&&(arg==='-o'||arg==='--output'||arg==='-f'||arg==='--format')){
       const value=args[++i];if(!value)throw new UsageError(`${arg} needs a value`);
       if(arg==='-o'||arg==='--output')opts.output=value;
@@ -63,9 +68,15 @@ function parseArgs(args:string[]):Options|'help'|'version' {
     if(!endOptions&&arg==='--strict'){opts.strict=true;continue;}
     if(!endOptions&&arg==='--no-color')continue;
     if(!endOptions&&arg!=='-'&&arg.startsWith('-'))throw new UsageError(`Unknown option ${arg}`);
-    if(!endOptions&&!opts.input&&!explicitCommand&&(arg==='dump'||arg==='assemble')){opts.command=arg;explicitCommand=true;continue;}
+    if(!endOptions&&!opts.input&&!explicitCommand&&(arg==='dump'||arg==='assemble'||arg==='shell')){opts.command=arg;explicitCommand=true;continue;}
     if(opts.input)throw new UsageError(`Unexpected argument ${arg}`);
     opts.input=arg;
+  }
+  if(interactive){if(explicitCommand&&opts.command!=='shell')throw new UsageError('--interactive cannot be combined with dump or assemble');opts.command='shell';}
+  if(opts.command==='shell'){
+    if(binary||opts.output||opts.format!=='dump'||opts.codeOnly||opts.strict)throw new UsageError('Dump/binary output options do not apply to the interactive monitor');
+    if(opts.input==='-')throw new UsageError('The monitor reads commands from stdin; pass a filename or use L inside the monitor');
+    return opts;
   }
   if(!opts.input)throw new UsageError('Provide an input filename, or - for stdin');
   if(binary){if(explicitCommand&&opts.command==='dump')throw new UsageError('--bin cannot be combined with the dump command');opts.command='assemble';}
@@ -94,6 +105,7 @@ async function main():Promise<void>{
   const options=process.argv.slice(2) |> parseArgs;
   if(options==='help'){process.stdout.write(HELP);return;}
   if(options==='version'){const pkg=JSON.parse(await readFile(fileURLToPath(new URL('../package.json',import.meta.url)),'utf8')) as {version:string};process.stdout.write(pkg.version+'\n');return;}
+  if(options.command==='shell'){const {runShell}=await import('./shell.js');process.exitCode=await runShell(options.input||undefined);return;}
   const bytes=await readInput(options.input);
   if(options.command==='assemble'){
     let source:string;try{source=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{throw new Error('HEXAW input must be UTF-8 text');}

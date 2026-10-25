@@ -1,6 +1,6 @@
 import {BinaryError,BinaryReader,decodeInstruction,encodeInstruction,readValueType,unsignedLEB} from './instruction-codec.js';
 
-/** @typedef {ReturnType<typeof decodeInstruction>} BinaryInstruction */
+/** @typedef {ReturnType<typeof decodeInstruction> & {depth:number}} BinaryInstruction */
 /** @typedef {{offset:number,end:number,sizeEncoding:Uint8Array,locals:Uint8Array,ops:BinaryInstruction[],tail:Uint8Array|null}} BinaryBody */
 /** @typedef {{id:number,offset:number,payload:number,end:number,sizeEncoding:Uint8Array,countEncoding?:Uint8Array,bodies:BinaryBody[]}} BinarySection */
 /** @typedef {{offset:number,bytes:number[],kind:string,section:string,owner:string,text:string,depth:number}} BinaryRecord */
