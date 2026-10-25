@@ -75,6 +75,8 @@ to the monitor. Ctrl-D / EOF exits. `hexaw*>` marks unsaved edits.
 | `R`, `K` | Typed VM state and PC; active call frames. |
 | `DM [start [end \| L length]]` | Dump VM linear memory. |
 | `BP [offset]`, `BC offset\|*` | Set/list breakpoints; clear one/all. |
+| `AI question`, `// question`, `:AI question` | Ask the HEXAW/WASM mentor; preserve assembly/VM state. |
+| `AI HELP`, `AI STATUS`, `AI KNOWLEDGE [topic]` | Local AI setup/status or bundled knowledge, including offline. |
 | `?`, `HELP`, `Q` | Help; exit. |
 
 ## Addresses and numbers
@@ -166,6 +168,13 @@ lengths can require longer LEB128 size prefixes. Applying the draft reports its
 final range and any rebase. `U` then starts at the final address. Drafts are
 limited to 10000h encoded bytes and individual input lines to 10000h characters.
 EOF discards an open draft; scripts exit nonzero if instructions were pending.
+
+Standalone `// question` lines in the **shell** address the AI instructor, just
+like TiyF; they leave the draft intact. Use `;` or `#` for non-AI standalone
+comments. An inline `CONST 42 // comment` remains a source comment. Set
+`GROQ_API_KEY` before launch; `:AI question`, `AI REVIEW` and `AI ERROR` also
+work without leaving assembly mode. See the [AI guide](ai.md) for context,
+language, cancellation and the question-time snapshot used by background replies.
 
 The complete scripted example runs from the repository root:
 

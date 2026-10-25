@@ -10,6 +10,9 @@ import type {NumericType,NumericValue,StackValue} from './core/hexaw-core.js';
 import {BinaryReader,decodeInstruction,encodeInstruction} from './core/instruction-codec.js';
 import {disassembleBinary,SECTION_NAMES} from './core/binary-module.js';
 import {INSTRUCTIONS} from './core/instruction-set.js';
+import {VERSION} from './core/hexaw-core.js';
+import {clip} from './instructor-context.js';
+import type {InstructorSnapshot} from './instructor-context.js';
 
 const MAX_INPUT=64*1024*1024,MAX_PAGE=0x10000,MAX_UNDO=16*1024*1024;
 export const SHELL_HELP=`HEXAW interactive monitor — DEBUG / SST inspired
@@ -42,6 +45,8 @@ export const SHELL_HELP=`HEXAW interactive monitor — DEBUG / SST inspired
   DM [start [end | L length]] Dump VM linear memory (separate address space)
   BP [file offset]           List / set breakpoints
   BC offset|*                Clear one / all breakpoints
+  AI question / // question  Ask the HEXAW / WASM mentor (GROQ_API_KEY)
+  AI HELP                    AI setup, language, review, reset and cancellation
   ? / HELP                   Help (also F1 in a terminal)
   Q / QUIT                   Exit
 
@@ -65,14 +70,15 @@ END is a WASM instruction, not the command to leave this mode.
   :CANCEL / Esc / Ctrl-C     Discard the draft and return to the monitor
   ? / :HELP / F1            Show assembly help and mnemonics
   F3                        Recall the original instruction at this position
+  :AI question / // question Ask the mentor without changing the draft
 
 Operands follow HEXAW source syntax: decimal by default, or 0x-prefixed hex.
 FILE addresses are provisional until WASM body/section lengths are rebuilt.
 If validation fails, the draft stays open for correction; the buffer is unchanged.
 
 `+INSTRUCTIONS.map(r=>r.name).reduce((rows:string[],name:string,index:number)=>{if(index%mnemonicColumns===0)rows.push('');rows[rows.length-1]+=name.padEnd(mnemonicWidth);return rows;},[]).map(row=>row.trimEnd()).join('\n')+'\n';
-export const SHELL_COMMANDS=['L','D','U','NEXT','PREV','I','FN','S','E','F','A','UNDO','REDO','W','SOURCE','V','H','CALL','T','P','G','BACK','Z','R','K','DM','BP','BC','HELP','QUIT'];
-export const ASSEMBLY_COMMANDS=[...INSTRUCTIONS.map(r=>r.name),':UNDO',':LIST',':CANCEL',':HELP'];
+export const SHELL_COMMANDS=['L','D','U','NEXT','PREV','I','FN','S','E','F','A','UNDO','REDO','W','SOURCE','V','H','CALL','T','P','G','BACK','Z','R','K','DM','BP','BC','AI','HELP','QUIT'];
+export const ASSEMBLY_COMMANDS=[...INSTRUCTIONS.map(r=>r.name),':UNDO',':LIST',':CANCEL',':HELP',':AI'];
 interface Word {value:string;quoted:boolean}
 interface Edit {offset:number;before:Uint8Array;after:Uint8Array;beforeRevision:number;afterRevision:number}
 interface View {kind:'D'|'U'|'DM';start:number;length:number}
@@ -177,6 +183,24 @@ export class HexawSession {
   get originalInstruction():string|null {
     const draft=this.assembly;if(!draft)return null;
     return draft.module.sections.find(s=>s.id===10)!.bodies[draft.body].ops[draft.index+draft.ops.length]?.text??null;
+  }
+  /** Bounded code/state only: never send full binaries, linear memory or env. */
+  instructorSnapshot():InstructorSnapshot {
+    const vm=this.vm,draft=this.assembly,bodies=this.inspection?.binary?.sections.find(s=>s.id===10)?.bodies??[];
+    const pc=vm?.state==='trapped'?vm.trace.at(-1)?.offset:vm?.current?.offset;
+    const address=draft?.address??pc??(this.lastView?.kind==='U'?this.lastView.start:this.uCursor);
+    let index=draft?.body??bodies.findIndex(b=>address>=b.offset&&address<b.end);if(index<0&&bodies.length)index=0;
+    const body=bodies[index],fn=this.inspection?.decoded?.functions[index];
+    let at=body?.ops.findIndex(op=>op.offset>=address)??0;if(at<0)at=Math.max(0,(body?.ops.length??0)-1);
+    const start=Math.max(0,at-4),value=(v:StackValue)=>clip(scalar(v),100);
+    return {
+      version:VERSION,mode:draft?'assembly':'monitor',
+      buffer:{loaded:this.loaded,name:this.filename?clip(basename(this.filename),128):null,bytes:this.buffer.length,modified:this.dirty,validWasm:!!this.inspection,diagnostic:clip(this.moduleDiagnostic||this.inspection?.diagnostic||'',512),definedBodies:bodies.length,exportsKnown:!!this.inspection?.decoded,exports:(this.inspection?.decoded?.exports??[]).slice(0,8).map(e=>clip(e.name,64))},
+      focus:body?{body:index,params:fn?.params.slice(0,16)??null,results:fn?.results.slice(0,16)??null,signatureTruncated:!!fn&&(fn.params.length>16||fn.results.length>16),code:body.ops.slice(start,start+16).map(op=>({offset:hex(op.offset,8),bytes:[...op.bytes.subarray(0,24)].map(b=>hex(b)).join(' ')+(op.bytes.length>24?' …':''),text:clip(op.text,256)})),totalInstructions:body.ops.length}:null,
+      draft:draft?{start:hex(draft.address,8),next:hex(this.assemblyAddress!,8),instructions:draft.ops.length,lines:draft.input.slice(-16).map(line=>clip(line,256)),truncated:draft.input.length>16||draft.input.some(line=>line.length>256)}:null,
+      vm:vm?{state:vm.state,steps:vm.steps,pc:pc===undefined?null:hex(pc,8),next:vm.state==='trapped'?clip(vm.trace.at(-1)?.instruction??'',256):vm.current?.name??null,stack:vm.stack.slice(-12).map(value),locals:(vm.currentFrame?.locals??[]).slice(0,12).map(value),globals:vm.globals.slice(0,12).map(value),result:vm.result.slice(0,12).map(value),stackDepth:vm.stack.length,localCount:vm.currentFrame?.locals.length??0,globalCount:vm.globals.length,resultCount:vm.result.length,error:vm.error?clip(vm.error,512):null,frames:vm.frames.length,memoryBytes:vm.memory.length}:null,
+      breakpoints:[...this.breakpoints].slice(0,24).map(at=>hex(at,8)),
+    };
   }
   cancelAssembly(reason='cancelled'):string {
     if(!this.assembly)return '';

@@ -1,9 +1,10 @@
 {
   "name": "hexaw-repository",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "HEXAW CLI and browser Workshop",
   "files": [
+    ".env.example",
     "README.md",
     "LICENSE",
     "docs",
@@ -11,6 +12,7 @@
     "workshop",
     "packages/cli/src",
     "packages/cli/package.json",
+    "packages/cli/THIRD_PARTY_NOTICES.md",
     "packages/cli/tsconfig.json",
     "scripts",
     "test"

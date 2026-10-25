@@ -104,6 +104,22 @@ session, and scripts exit nonzero if a command failed. From the repository,
 `npm run shell -- examples/add.hexaw` builds and starts the monitor directly.
 See the [complete interactive guide](https://github.com/Pengeszikra/hexaw/blob/main/docs/interactive.md).
 
+## AI instructor
+
+Set `GROQ_API_KEY` in the host environment before launching `hexaw -i`, then use
+`// question`, `AI question` or `:AI question` in assembly mode. The same
+`openai/gpt-oss-120b` model as Terminal Is Your Friend now teaches HEXAW/WASM,
+using the live opcode table and a bounded snapshot of code, draft, VM values and
+recent commands. It keeps language and a short teaching notebook for this shell
+session. `AI REVIEW`, `AI ERROR`, `AI LANGUAGE hu`, `AI CANCEL`, `AI CLEAR` and
+`AI RESET` control it. `AI HELP` and `AI KNOWLEDGE ADD` work offline.
+
+In a terminal, AI requests leave local commands available; redirected scripts
+wait for replies in order. Examples are never executed automatically. No full
+binary, linear-memory contents or environment is sent, and there are no startup
+or idle requests. The API key set on TiyF's server is not inherited by a local
+CLI. See the [AI setup/context guide](https://github.com/Pengeszikra/hexaw/blob/main/docs/ai.md).
+
 ## A first HEXAW function
 
 ```text

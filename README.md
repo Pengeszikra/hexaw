@@ -97,6 +97,17 @@ scripts through stdin and real terminals with history and completion. See the
 [interactive guide](docs/interactive.md) for hex number conventions, examples
 and the historical DEBUG/SST references.
 
+## HEXAW / WASM AI mentor
+
+The shell includes TiyF's Groq `openai/gpt-oss-120b` instructor with HEXAW/WASM
+knowledge, remembered language and a small session-only teaching notebook. Set
+`GROQ_API_KEY` in the environment, start `npm run shell`, and use `// question`
+or `AI question`; `:AI question` also works while entering assembly. `AI REVIEW`
+and `AI ERROR` explain the current bounded code/VM state or recent failure.
+Questions run in the background in a terminal, and suggested code is displayed
+without execution. `AI HELP` documents configuration and controls; `AI KNOWLEDGE
+ADD` reads bundled opcode facts offline. See the [AI guide](docs/ai.md).
+
 ## Run the preserved Workshop
 
 ```sh

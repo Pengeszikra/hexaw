@@ -3,4 +3,7 @@ packages/cli/dist/
 artifacts/
 coverage/
 *.tgz
+.env
+.env.*
+!.env.example
 .DS_Store

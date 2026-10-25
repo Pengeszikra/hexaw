@@ -21,7 +21,7 @@ const packed=JSON.parse(run(process.execPath,[npmPath,'pack','--workspace','pack
 assert.equal(packed.length,1);
 const pkg=packed[0];assert.equal(pkg.name,'hexaw');
 const files=pkg.files.map(f=>f.path);
-for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/assemble.js','dist/shell.js','dist/session.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/core/instruction-set.js','dist/core/instruction-codec.js','dist/core/binary-module.js','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
+for(const path of ['dist/cli.js','dist/index.js','dist/index.d.ts','dist/dump.js','dist/assemble.js','dist/shell.js','dist/session.js','dist/instructor.js','dist/instructor-shell.js','dist/instructor-context.js','dist/instructor-knowledge.js','dist/core/hexaw-core.js','dist/core/hexaw-core.d.ts','dist/core/instruction-set.js','dist/core/instruction-codec.js','dist/core/binary-module.js','dist/build-info.json','README.md','LICENSE'])assert.ok(files.includes(path),`Missing ${path}`);
 assert.ok(files.every(p=>!p.startsWith('src/')&&!p.startsWith('node_modules/')&&!p.startsWith('workshop/')));
 assert.equal(pkg.bundled.length,0);
 const temporary=await mkdtemp(join(tmpdir(),'hexaw-package-'));
@@ -49,6 +49,8 @@ try{
   assert.match(monitor,/RESULT: i32 0x2A \(42\)/);assert.match(monitor,/Rewound 1/);
   const assembly=run(process.execPath,[bin,'shell',wasm],temporary,{input:'A\nCONST 20\nCONST 22\nADD\n\nCALL add 0 0\nG\nQ\n'});
   assert.match(assembly,/41 14\s+: CONST 20/);assert.match(assembly,/Applied 3 instruction/);assert.match(assembly,/RESULT: i32 0x2A \(42\)/);
+  const aiOffline=run(process.execPath,[bin,'shell',wasm],temporary,{env:{...process.env,GROQ_API_KEY:''},input:'AI STATUS\nAI KNOWLEDGE ADD\nCALL add 2A 0\nG\nQ\n'});
+  assert.match(aiOffline,/openai\/gpt-oss-120b/);assert.match(aiOffline,/GROQ_API_KEY missing/);assert.match(aiOffline,/ADD = i32.add; opcode 6A/);assert.match(aiOffline,/RESULT: i32 0x2A \(42\)/);
   const api='import {dumpWasm,compileHEXAW,hexawContext,inspectWasm} from "hexaw"; import {Debugger} from "hexaw/core"; const p=compileHEXAW("FN 0\\nRES\\nCONST 42\\nEND"); if(new Debugger(p.decoded).run().result[0].value!==42)throw Error("result"); if(!dumpWasm(p.bytes).includes("CONST 42"))throw Error("dump"); if(!inspectWasm(p.bytes).decoded)throw Error("decode"); console.log("API OK")';
   assert.equal(run(process.execPath,['--input-type=module','-e',api],temporary),'API OK');
   const info=JSON.parse(await readFile(join(temporary,'node_modules/hexaw/dist/build-info.json'),'utf8'));
@@ -66,6 +68,6 @@ assert.equal(rootPackage.version,pkg.version,'Both published package versions mu
 const sourcePack=JSON.parse(run(process.execPath,[npmPath,'pack','--workspaces=false','--ignore-scripts','--json','--pack-destination',join(root,'artifacts')]))[0];
 assert.equal(sourcePack.name,'hexaw-repository');
 const sourceFiles=sourcePack.files.map(f=>f.path);
-for(const path of ['workshop/index.html','workshop/app.js','packages/cli/src/core/hexaw-core.js','packages/cli/src/core/instruction-set.js','packages/cli/src/core/instruction-codec.js','scripts/publish.mjs','docs/instructions.md','docs/binary-source.md','docs/interactive.md','examples/monitor.hexaw','examples/assembly.hexaw','examples/assembly.commands'])assert.ok(sourceFiles.includes(path),`Source package missing ${path}`);
+for(const path of ['.env.example','workshop/index.html','workshop/app.js','packages/cli/src/core/hexaw-core.js','packages/cli/src/core/instruction-set.js','packages/cli/src/core/instruction-codec.js','packages/cli/src/instructor-knowledge.ts','scripts/publish.mjs','docs/instructions.md','docs/binary-source.md','docs/interactive.md','docs/ai.md','examples/monitor.hexaw','examples/assembly.hexaw','examples/assembly.commands'])assert.ok(sourceFiles.includes(path),`Source package missing ${path}`);
 assert.ok(sourceFiles.every(p=>!p.startsWith('node_modules/')&&!p.startsWith('artifacts/')));
 console.log(`PASS ${sourcePack.name}@${sourcePack.version}: Workshop, shared engine, sources, publication script and instruction documentation packaged.`);
