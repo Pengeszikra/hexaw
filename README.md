@@ -17,6 +17,30 @@ The same repository also preserves the browser Workshop for later development.
 HEXAW stands for **HEX + Assembly + WebAssembly**. It grew from the WAX prototype,
 renamed to distinguish it from an existing WebAssembly language.
 
+## JS-compatible memory
+
+A module can share linear memory and globals with JavaScript
+(details: [docs/js-memory.md](docs/js-memory.md)):
+
+```
+MEM 1 4
+EXPM "memory"                  ; WebAssembly.Memory export
+DGLB 0 2.5
+EXPG "scale" 0                 ; WebAssembly.Global export
+DATA 0  hex:000000000000F03F   ; raw bytes in memory order
+DATA 16 f64: 1.5 2.5           ; typed little-endian values
+```
+
+```js
+const {memory, scale} = new WebAssembly.Instance(compileHEXAW(src).nativeModule).exports;
+new Float64Array(memory.buffer)[2] = 42;   // JS writes, HEXAW code reads
+```
+
+Typed `DATA` types: `i8 u8 i16 u16 i32 u32 i64 f32 f64`. `EXPM`, `EXPG` and
+non-text `DATA` (written as `hex:`) survive bytes → HEXAW → bytes round trips.
+`memory.grow()` detaches old `buffer` objects; re-read `.buffer` afterwards.
+Run the tests with `node --test test/core.test.mjs test/js-memory.test.mjs`.
+
 ## Repository layout
 
 | Path | Purpose |
